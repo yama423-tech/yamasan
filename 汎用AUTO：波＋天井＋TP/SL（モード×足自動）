@@ -1,0 +1,214 @@
+//@version=6
+indicator("汎用AUTO：波＋天井＋TP/SL（モード×足自動）", overlay=true, shorttitle="AUTO波TP")
+
+// ========== 可視性 ==========
+groupVis = "可視性"
+showMA       = input.bool(true, "MA100/200を表示", group=groupVis)
+showBBbasis  = input.bool(false, "BB基準線を表示", group=groupVis)
+lookbackBars = input.int(400, "直近だけ描画：バー数", minval=50, step=50, group=groupVis)
+
+useAlert  = input.bool(true, "アラートON", inline="AL")
+placeLabel = input.bool(true, "右上に状態ラベル", inline="AL")
+
+// ========== 運用モード ==========
+groupMode = "運用モード（時間軸一体最適化）"
+mode = input.string("スイング", "モード", options=["短期","スイング","中期","長期"], group=groupMode)
+
+// --- モード別スケール ---
+f_gap_scale(_m)=>  _m=="短期"?0.60: _m=="スイング"?1.00: _m=="中期"?1.30: 1.70
+f_atr_scale(_m)=>  _m=="短期"?0.85: _m=="スイング"?1.00: _m=="中期"?1.15: 1.30
+f_ma_scale(_m)=>   _m=="短期"?0.85: _m=="スイング"?1.00: _m=="中期"?1.20: 1.50
+
+gGapM = f_gap_scale(mode)
+gATRM = f_atr_scale(mode)
+gMAM  = f_ma_scale(mode)
+
+// ========== TP/SL（基準 & ATR%自動補正） ==========
+groupTP  = "TP/SL（ATRベース）"
+atrLen   = input.int(14, "ATR期間", group=groupTP)
+// 第1波（基準）
+tp1_w1_base = input.float(1.50, "第1波: TP1倍率（基準）", step=0.1, group=groupTP)
+tp2_w1_base = input.float(2.50, "第1波: TP2倍率（基準）", step=0.1, group=groupTP)
+sl_w1_base  = input.float(1.00, "第1波: SL倍率（基準）", step=0.1, group=groupTP)
+// 第2波（基準）
+tp1_w2_base = input.float(1.80, "第2波: TP1倍率（基準）", step=0.1, group=groupTP)
+tp2_w2_base = input.float(3.00, "第2波: TP2倍率（基準）", step=0.1, group=groupTP)
+sl_w2_base  = input.float(1.10, "第2波: SL倍率（基準）", step=0.1, group=groupTP)
+
+// ATR％で自動補正
+groupTPauto = "ATR％自動補正"
+autoTP   = input.bool(true, "ATR％で自動補正ON", group=groupTPauto)
+thrLow   = input.float(1.2, "低/中ボラ境界（%）", step=0.1, group=groupTPauto)
+thrHigh  = input.float(3.0, "中/高ボラ境界（%）", step=0.1, group=groupTPauto)
+kTP_low  = input.float(0.90, "低ボラ: TPスケール", step=0.05, group=groupTPauto)
+kTP_mid  = input.float(1.00, "中ボラ: TPスケール", step=0.05, group=groupTPauto)
+kTP_high = input.float(1.30, "高ボラ: TPスケール", step=0.05, group=groupTPauto)
+kSL_low  = input.float(0.90, "低ボラ: SLスケール", step=0.05, group=groupTPauto)
+kSL_mid  = input.float(1.00, "中ボラ: SLスケール", step=0.05, group=groupTPauto)
+kSL_high = input.float(1.20, "高ボラ: SLスケール", step=0.05, group=groupTPauto)
+
+// ========== クールダウン ==========
+groupGap       = "クールダウン（最小バー間隔）"
+gapFirstBase   = input.int(40, "第1波", minval=1, group=groupGap)
+gapSecondBase  = input.int(40, "第2波", minval=1, group=groupGap)
+gapTopWarnBase = input.int(60, "天井注意", minval=1, group=groupGap)
+gapRSIextBase  = input.int(60, "RSI極端", minval=1, group=groupGap)
+
+// ========== コア指標 ==========
+groupCore      = "コア指標"
+fastLen        = input.int(12, "MACD短期", group=groupCore)
+slowLen        = input.int(26, "MACD長期", group=groupCore)
+signalLen      = input.int(9,  "MACDシグナル", group=groupCore)
+maFastLenBase  = input.int(100,"MA100", group=groupCore)
+maSlowLenBase  = input.int(200,"MA200", group=groupCore)
+rsiLenBase     = input.int(14, "RSI期間", group=groupCore)
+rsiOb          = input.float(70,"RSI過熱", step=0.5, group=groupCore)
+rsiOb2         = input.float(80,"RSI極端", step=0.5, group=groupCore)
+bbLen          = input.int(20, "BB期間", group=groupCore)
+bbMult         = input.float(2.0,"BB倍率", group=groupCore)
+
+// ========== 足種検出 ==========
+isIntra       = timeframe.isintraday
+isDaily       = timeframe.isdaily
+isWeeklyPlus  = timeframe.isweekly or timeframe.ismonthly
+f_tf_scale() =>
+    gapK = isIntra ? 0.70 : isDaily ? 1.00 : 1.30
+    atrK = isIntra ? 0.90 : isDaily ? 1.00 : 1.20
+    maK  = isIntra ? 0.80 : isDaily ? 1.00 : 1.30
+    [gapK, atrK, maK]
+[gGapTF, gATRTF, gMATF] = f_tf_scale()
+
+// ========== 指標計算 ==========
+[macd, signal, hist] = ta.macd(close, fastLen, slowLen, signalLen)
+atr     = ta.atr(atrLen)
+atrPct  = atr / close * 100.0
+ma100   = ta.sma(close, int(math.round(maFastLenBase * gMAM * gMATF)))
+ma200   = ta.sma(close, int(math.round(maSlowLenBase * gMAM * gMATF)))
+rsi     = ta.rsi(close,  int(math.round(rsiLenBase * gMATF)))
+basis   = ta.sma(close, bbLen)
+dev     = bbMult * ta.stdev(close, bbLen)
+upper   = basis + dev
+
+trendUp     = ma100 > ma200
+inFirstRaw  = trendUp and ta.crossover(macd, signal)
+inSecondRaw = close > ma100 and ta.crossover(macd, 0)
+rsiHot      = rsi >= rsiOb
+rsiExtreme  = rsi >= rsiOb2
+bbTouch     = high >= upper or close >= upper
+topWarnRaw  = (rsiHot and bbTouch) or ta.crossunder(macd, signal)
+
+// ========== クールダウン（各シグナル独立管理） ==========
+gapFirst   = int(math.round(gapFirstBase  * gGapM * gGapTF))
+gapSecond  = int(math.round(gapSecondBase * gGapM * gGapTF))
+gapTopWarn = int(math.round(gapTopWarnBase* gGapM * gGapTF))
+gapRSIext  = int(math.round(gapRSIextBase * gGapM * gGapTF))
+
+var int lastFirst  = na
+var int lastSecond = na
+var int lastTop    = na
+var int lastRSI    = na
+
+sigFirst = inFirstRaw  and (na(lastFirst)  or bar_index - lastFirst  >= gapFirst)
+if sigFirst
+    lastFirst := bar_index
+
+sigSecond = inSecondRaw and (na(lastSecond) or bar_index - lastSecond >= gapSecond)
+if sigSecond
+    lastSecond := bar_index
+
+sigTop = topWarnRaw and (na(lastTop) or bar_index - lastTop >= gapTopWarn)
+if sigTop
+    lastTop := bar_index
+
+sigRSI = rsiExtreme and (na(lastRSI) or bar_index - lastRSI >= gapRSIext)
+if sigRSI
+    lastRSI := bar_index
+
+// ========== エントリー保持 ==========
+var float entryPrice = na
+var int   lastWave   = na
+if sigFirst
+    entryPrice := close
+    lastWave := 1
+if sigSecond
+    entryPrice := close
+    lastWave := 2
+
+// ========== ATR％帯スケール ==========
+f_band(_p)=> _p<=thrLow?0:_p<=thrHigh?1:2
+band = f_band(atrPct)
+f_scaleTP_band(_b)=> _b==0?kTP_low:_b==1?kTP_mid:kTP_high
+f_scaleSL_band(_b)=> _b==0?kSL_low:_b==1?kSL_mid:kSL_high
+
+// 実効倍率（モード×足×ATR%帯×波別）
+f_tp_mult(_wave,_isTP1)=>
+    float base = _wave==1 ? (_isTP1?tp1_w1_base:tp2_w1_base) : (_isTP1?tp1_w2_base:tp2_w2_base)
+    base * (autoTP ? f_scaleTP_band(band) : 1.0) * gATRM * gATRTF
+f_sl_mult(_wave)=>
+    float base = _wave==1 ? sl_w1_base : sl_w2_base
+    base * (autoTP ? f_scaleSL_band(band) : 1.0) * gATRM * gATRTF
+
+tp1MultEff = not na(lastWave) ? f_tp_mult(lastWave, true)  : na
+tp2MultEff = not na(lastWave) ? f_tp_mult(lastWave, false) : na
+slMultEff  = not na(lastWave) ? f_sl_mult(lastWave)        : na
+
+tp1 = not na(entryPrice) and not na(tp1MultEff) ? entryPrice + atr * tp1MultEff : na
+tp2 = not na(entryPrice) and not na(tp2MultEff) ? entryPrice + atr * tp2MultEff : na
+sl  = not na(entryPrice) and not na(slMultEff)  ? entryPrice - atr * slMultEff  : na
+
+// ========== プロット ==========
+plot(showMA?ma100:na,   "MA100",     color=color.yellow, linewidth=2)
+plot(showMA?ma200:na,   "MA200",     color=color.orange, linewidth=2)
+plot(showBBbasis?basis:na, "BB基準線", color=color.new(color.blue,70))
+
+plotshape(sigFirst,  title="第1波IN",  color=color.new(color.lime,0),  style=shape.triangleup,   location=location.belowbar, size=size.small, text="1")
+plotshape(sigSecond, title="第2波IN",  color=color.new(color.teal,0),  style=shape.triangleup,   location=location.belowbar, size=size.small, text="2")
+plotshape(sigTop,    title="天井注意", color=color.new(color.red,0),   style=shape.triangledown, location=location.abovebar, size=size.small, text="TOP")
+plotshape(sigRSI,    title="RSI極端",  color=color.new(color.purple,0),style=shape.circle,       location=location.abovebar, size=size.tiny,  text="RSI")
+
+p_entry = plot(entryPrice, "Entry", color=color.new(color.gray, 70))
+p_tp1   = plot(tp1,        "TP1",   color=color.new(color.lime, 0), linewidth=2)
+p_tp2   = plot(tp2,        "TP2",   color=color.new(color.green,0), linewidth=2)
+p_sl    = plot(sl,         "SL",    color=color.new(color.red,  0), linewidth=2)
+fill(p_tp1, p_tp2, title="TPゾーン", color=color.new(color.green, 88))
+fill(p_sl,  p_entry, title="SLゾーン", color=color.new(color.red,   90))
+
+// ========== アラート ==========
+alertcondition(inFirstRaw,  title="第1波IN（RAW）", message="第1波IN（RAW）")
+alertcondition(inSecondRaw, title="第2波IN（RAW）", message="第2波IN（RAW）")
+alertcondition(topWarnRaw,  title="天井注意（RAW）", message="天井注意（RAW）")
+
+tp1Hit = not na(entryPrice) and not na(tp1) and high >= tp1
+tp2Hit = not na(entryPrice) and not na(tp2) and high >= tp2
+slHit  = not na(entryPrice) and not na(sl)  and low  <= sl
+
+if useAlert
+    if sigFirst
+        alert(str.format("{0}@{1} 第1波IN", syminfo.ticker, timeframe.period), alert.freq_once_per_bar_close)
+    if sigSecond
+        alert(str.format("{0}@{1} 第2波IN", syminfo.ticker, timeframe.period), alert.freq_once_per_bar_close)
+    if sigTop
+        alert(str.format("{0}@{1} 天井注意", syminfo.ticker, timeframe.period), alert.freq_once_per_bar_close)
+    if tp1Hit
+        alert(str.format("{0}@{1} TP1到達", syminfo.ticker, timeframe.period), alert.freq_once_per_bar)
+    if tp2Hit
+        alert(str.format("{0}@{1} TP2到達", syminfo.ticker, timeframe.period), alert.freq_once_per_bar)
+    if slHit
+        alert(str.format("{0}@{1} SL到達", syminfo.ticker, timeframe.period), alert.freq_once_per_bar)
+
+// ========== パネル ==========
+var label info = na
+if placeLabel and barstate.islast
+    tfTxt   = isIntra ? "Intraday" : isDaily ? "Daily" : "Weekly+"
+    waveTxt = na(lastWave) ? "-" : (lastWave==1 ? "第1波" : "第2波")
+    txt = "AUTO（モード×足×ATR%）\n" +
+          str.format("モード:{0} 足:{1}\n波:{2} ATR%:{3,number,#.00}%\nTP1×{4,number,#.00} TP2×{5,number,#.00} SL×{6,number,#.00}\nGap 1/2/TOP/RSI:{7}/{8}/{9}/{10}",
+                     mode, tfTxt, waveTxt, atrPct, tp1MultEff, tp2MultEff, slMultEff, gapFirst, gapSecond, gapTopWarn, gapRSIext)
+    if na(info)
+        info := label.new(bar_index, high, txt, style=label.style_label_right, textalign=text.align_left)
+    else
+        label.set_x(info, bar_index)
+        label.set_y(info, high)
+        label.set_text(info, txt)
+        label.set_color(info, color.new(color.black, 0))
+        label.set_textcolor(info, color.white)
