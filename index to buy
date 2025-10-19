@@ -1,0 +1,198 @@
+//@version=6
+indicator("世界インデックス 買い時Pro（銘柄プリセット×自動TF×暴落フィルタ）", overlay=true, shorttitle="IndexBuy Pro+ v6")
+
+// ========== 入力 ==========
+groupM = "モード / 時間足"
+mode = input.string("中期", "モード", options=["短期","中期","長期"], group=groupM)
+tfChoice = input.string("自動", "解析時間足", options=["自動","4H","1D","1W"], group=groupM)
+showMA      = input.bool(true,  "基準MAを表示", group=groupM)
+showLabels  = input.bool(true,  "シグナルラベル表示", group=groupM)
+showTable   = input.bool(true,  "右上メーター表示", group=groupM)
+
+groupF = "暴落フィルタ（-2σ×拡大型×急落率）"
+useCrash   = input.bool(true,  "暴落フィルタON", group=groupF)
+bbLenIn    = input.int(20,     "BB期間", minval=10, group=groupF)
+bbK        = input.float(2.0,  "σ倍率", step=0.1, group=groupF)
+bwMult     = input.float(1.4,  "バンド拡大型倍率（>平均×これ）", step=0.1, group=groupF)
+dropPct    = input.float(-3.0, "急落率（％/バー）以下", step=0.1, group=groupF)
+
+groupT = "上級者向け微調整（プリセットを上書き可）"
+overrideParams = input.bool(false, "↓プリセットを手動上書き", group=groupT)
+maLenUser   = input.int(0,   "MA長さ（0=プリセット）", minval=0, group=groupT)
+rsiLenUser  = input.int(0,   "RSI期間（0=プリセット）", minval=0, group=groupT)
+rsiBuyUser  = input.int(0,   "RSI買い水準（0=プリセット）", minval=0, group=groupT)
+dipThUser   = input.float(0, "MA乖離しきい値％（負値で押し目）", step=0.1, group=groupT)
+volMultUser = input.float(0, "出来高倍率（>平均×）", step=0.1, group=groupT)
+macdFUser   = input.int(0,   "MACD Fast（0=プリセット）", minval=0, group=groupT)
+macdSUser   = input.int(0,   "MACD Slow（0=プリセット）", minval=0, group=groupT)
+macdSigUser = input.int(0,   "MACD Signal（0=プリセット）", minval=0, group=groupT)
+
+// ========== 解析時間足の自動選択 ==========
+f_pick_tf() =>
+    // チャート足 → 解析足（自動）
+    // 60分以下→4H、1〜4時間→1D、日足以上→1W
+    var string sel = "1D"
+    if tfChoice != "自動"
+        sel := tfChoice == "4H" ? "240" : tfChoice == "1D" ? "D" : "W"
+    else
+        if timeframe.isintraday
+            sel := timeframe.multiplier <= 60 ? "240" : "D"
+        else
+            sel := timeframe.isdaily ? "W" : "W"
+    sel
+
+tf = f_pick_tf()
+
+// ========== ユーティリティ ==========
+f_has(s, sub) => str.contains(str.upper(s), str.upper(sub))
+
+// ========== 銘柄ごとのプリセット（代表） ==========
+// 戻り値: [maLen, rsiLen, rsiBuy, dipTh(%), volMult, macdF, macdS, macdSig, displayName]
+f_presets(sym, desc) =>
+    _name = ""
+    // デフォルト（先進株式）
+    _ma=100, _rsiL=14, _rsiB=35, _dip=-5.0, _vol=1.5, _mf=12, _ms=26, _mg=9, _name:="汎用(先進株式)"
+
+    if f_has(sym,"NI225") or f_has(desc,"NIKKEI")
+        _ma:=100, _rsiL:=14, _rsiB:=36, _dip:=-5.0, _vol:=1.4, _mf:=12, _ms:=26, _mg:=9, _name:="日経225"
+    else if f_has(sym,"TOPIX")
+        _ma:=120, _rsiL:=14, _rsiB:=36, _dip:=-5.5, _vol:=1.4, _mf:=12, _ms:=26, _mg:=9, _name:="TOPIX"
+    else if f_has(sym,"SPX") or f_has(sym,"SPY") or f_has(desc,"S&P 500")
+        _ma:=100, _rsiL:=14, _rsiB:=35, _dip:=-5.0, _vol:=1.5, _mf:=12, _ms:=26, _mg:=9, _name:="S&P500"
+    else if f_has(sym,"NDX") or f_has(sym,"QQQ")
+        _ma:=100, _rsiL:=14, _rsiB:=34, _dip:=-6.0, _vol:=1.6, _mf:=12, _ms:=26, _mg:=9, _name:="NASDAQ100"
+    else if f_has(sym,"ACWI") or f_has(sym,"316A") or f_has(sym,"TOK") or f_has(desc,"ACWI")
+        _ma:=120, _rsiL:=14, _rsiB:=35, _dip:=-5.0, _vol:=1.5, _mf:=12, _ms:=26, _mg:=9, _name:="MSCI ACWI"
+    else if f_has(sym,"EEM") or f_has(desc,"EMERGING") or f_has(sym,"2631") or f_has(sym,"1658")
+        _ma:=150, _rsiL:=14, _rsiB:=38, _dip:=-7.0, _vol:=1.6, _mf:=12, _ms:=26, _mg:=9, _name:="MSCIエマージング"
+    else if f_has(sym,"NIFTY")
+        _ma:=120, _rsiL:=14, _rsiB:=37, _dip:=-5.5, _vol:=1.5, _mf:=12, _ms:=26, _mg:=9, _name:="NIFTY50"
+    else if f_has(sym,"EZU") or f_has(sym,"IEV")
+        _ma:=120, _rsiL:=14, _rsiB:=36, _dip:=-5.5, _vol:=1.5, _mf:=12, _ms:=26, _mg:=9, _name:="欧州株"
+    else if f_has(sym,"GLDM") or f_has(desc,"GOLD")
+        _ma:=200, _rsiL:=14, _rsiB:=32, _dip:=-6.0, _vol:=1.4, _mf:=24, _ms:=52, _mg:=9, _name:="金(GLDM)"
+    else if f_has(sym,"BND") or f_has(desc,"TOTAL BOND")
+        _ma:=150, _rsiL:=14, _rsiB:=35, _dip:=-3.5, _vol:=1.3, _mf:=24, _ms:=52, _mg:=9, _name:="米総合債券(BND)"
+    else if f_has(sym,"ETHUSD")
+        _ma:=200, _rsiL:=21, _rsiB:=30, _dip:=-10.0, _vol:=1.8, _mf:=24, _ms:=52, _mg:=9, _name:="ETHUSD"
+    else if f_has(sym,"BIT1!") or f_has(desc,"BITCOIN")
+        _ma:=200, _rsiL:=21, _rsiB:=30, _dip:=-10.0, _vol:=1.8, _mf:=24, _ms:=52, _mg:=9, _name:="ビットコイン指数(BIT1!)"
+    else if f_has(sym,"SOL") or f_has(sym,"SOLUSD")
+        _ma:=200, _rsiL:=21, _rsiB:=30, _dip:=-12.0, _vol:=2.0, _mf:=24, _ms:=52, _mg:=9, _name:="SOL"
+    else if f_has(sym,"2243")
+        _ma:=120, _rsiL:=14, _rsiB:=35, _dip:=-5.0, _vol:=1.4, _mf:=12, _ms:=26, _mg:=9, _name:="2243"
+    else if f_has(sym,"2631")
+        _ma:=150, _rsiL:=14, _rsiB:=38, _dip:=-7.0, _vol:=1.6, _mf:=12, _ms:=26, _mg:=9, _name:="2631"
+
+    [_ma,_rsiL,_rsiB,_dip,_vol,_mf,_ms,_mg,_name]
+
+// プリセット取得
+[maP, rsiLP, rsiBP, dipP, volP, macdFP, macdSP, macdSigP, nameP] = f_presets(syminfo.ticker, syminfo.description)
+
+// モードで微調整
+if mode == "短期"
+    maP += -50, rsiBP += 2, dipP := dipP * 0.6
+else if mode == "長期"
+    maP += 50,  rsiBP -= 3, dipP := dipP * 1.2
+
+// 手動上書き
+maLen   = overrideParams and maLenUser  > 0 ? maLenUser  : maP
+rsiLen  = overrideParams and rsiLenUser > 0 ? rsiLenUser : rsiLP
+rsiBuy  = overrideParams and rsiBuyUser > 0 ? rsiBuyUser : rsiBP
+dipTh   = overrideParams and dipThUser  != 0 ? dipThUser : dipP
+volMult = overrideParams and volMultUser!= 0 ? volMultUser: volP
+macdF   = overrideParams and macdFUser  > 0 ? macdFUser  : macdFP
+macdS   = overrideParams and macdSUser  > 0 ? macdSUser  : macdSP
+macdSig = overrideParams and macdSigUser> 0 ? macdSigUser: macdSigP
+
+// ========== 解析用系列（request.securityで統一足へ） ==========
+symId = syminfo.tickerid
+c = request.security(symId, tf, close)
+h = request.security(symId, tf, high)
+l = request.security(symId, tf, low)
+v = request.security(symId, tf, volume)
+
+// ========== 指標計算（解析足） ==========
+ma      = ta.ema(c, maLen)
+maSlope = ta.ema(ma, 50)
+trendUp = ma > maSlope
+
+rsi = ta.rsi(c, rsiLen)
+[macdLine, macdSignal, macdHist] = ta.macd(c, macdF, macdS, macdSig)
+
+volAvg  = ta.sma(v, 50)
+volBoost = v > volAvg * volMult
+
+dis = (c - ma) / ma * 100.0
+buyRSI = rsi < rsiBuy
+buyDip = dis < dipTh
+
+// ========== 暴落フィルタ（-2σ×拡大型×急落率） ==========
+basis = ta.sma(c, bbLenIn)
+dev   = ta.stdev(c, bbLenIn)
+upper = basis + bbK*dev
+lower = basis - bbK*dev
+bw    = (upper - lower) / basis * 100.0
+bwAvg = ta.sma(bw, bbLenIn)
+ret1  = (c - nz(c[1], c)) / nz(c[1], c) * 100.0
+
+crashDetected = (c < lower) and (bw > bwAvg * bwMult) and (ret1 <= dropPct)
+
+// ========== シグナル ==========
+buySignal   = trendUp and buyRSI and (volBoost or buyDip)
+strongBuy   = buySignal and ta.crossover(macdLine, macdSignal)
+buyWithCrash = useCrash ? (buySignal and crashDetected) : buySignal
+strongWithCrash = useCrash ? (strongBuy and crashDetected) : strongBuy
+
+// ========== 可視化 ==========
+plot(showMA ? ma : na, title="基準MA", color=color.new(color.blue, 0), linewidth=2)
+plotshape(buyWithCrash, title="BUY", style=shape.triangleup, size=size.large, color=color.new(color.teal, 0), location=location.belowbar, text="BUY")
+plotshape(strongWithCrash, title="STRONG", style=shape.triangleup, size=size.large, color=color.new(color.green, 0), location=location.belowbar, text="STRONG")
+
+// ========== スコア化（買い時度 0～100） ==========
+rsiScore  = math.max(0.0, math.min(1.0, (rsiBuy - rsi) / rsiBuy))
+macdNow   = macdLine - macdSignal
+macdScore = macdNow > 0 ? 0.6 : 0.0
+xScore    = strongWithCrash ? 1.0 : 0.0
+dipScore  = dis < 0 ? math.min(1.0, math.abs(dis) / math.abs(dipTh)) : 0
+volScore  = volBoost ? 1.0 : 0.0
+crashBonus= useCrash and crashDetected ? 0.2 : 0.0
+
+score = 100.0 * (0.35*rsiScore + 0.25*macdScore + 0.2*dipScore + 0.15*volScore + 0.05*xScore + crashBonus)
+scoreRounded = math.round(score)
+
+// ========== GUI（右上メーター） ==========
+var table t = na
+dispName = nameP + " / " + tf + " / " + mode
+if showTable
+    if na(t)
+        t := table.new(position.top_right, 2, 7, frame_color=color.new(color.gray, 60), frame_width=1, border_color=color.new(color.gray, 70))
+    clr = scoreRounded >= 80 ? color.new(color.green, 0) :
+          scoreRounded >= 60 ? color.new(color.lime, 0)  :
+          scoreRounded >= 40 ? color.new(color.orange, 0) :
+                               color.new(color.red, 0)
+    table.cell(t, 0, 0, "銘柄/TF/モード", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 0, dispName,        text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 0, 1, "買い時度", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 1, str.tostring(scoreRounded)+"/100", text_color=color.white, bgcolor=clr)
+    table.cell(t, 0, 2, "RSI", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 2, str.tostring(math.round(rsi,1)), text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(t, 0, 3, "MA乖離(%)", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 3, str.tostring(math.round(dis,2)), text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(t, 0, 4, "出来高×", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 4, volBoost ? "ON("+str.tostring(volMult)+")" : "OFF("+str.tostring(volMult)+")", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(t, 0, 5, "暴落検知", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 5, useCrash ? (crashDetected ? "ON(ヒット)" : "ON") : "OFF", text_color=color.white, bgcolor=useCrash ? (crashDetected? color.new(color.green,0):color.new(color.orange,0)) : color.new(color.black,0))
+    table.cell(t, 0, 6, "MACD", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, 6, macdNow>0 ? "優位" : "劣位", text_color=color.white, bgcolor=macdNow>0?color.new(color.green,0):color.new(color.red,0))
+
+// ========== ラベル ==========
+if showLabels and buyWithCrash
+    label.new(bar_index, l, strongWithCrash ? "STRONG BUY" : "BUY",        style=label.style_label_up,        color=strongWithCrash ? color.new(color.green,0) : color.new(color.teal,0),        textcolor=color.white)
+
+// ========== アラート ==========
+msgBuy   = "買い時サイン：" + syminfo.ticker + " / TF=" + str.tostring(tf) + " / モード=" + mode
+msgStrong= "強い買い：RSI+MACD " + syminfo.ticker + " / TF=" + str.tostring(tf) + " / モード=" + mode
+
+alertcondition(buyWithCrash,    title="買い時サイン（通常/暴落条件適用）", message="買い時サイン（通常/暴落条件適用）")
+alertcondition(strongWithCrash, title="買い時サイン（強/暴落条件適用）",   message="買い時サイン（強/暴落条件適用）")
