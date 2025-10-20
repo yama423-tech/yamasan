@@ -1,0 +1,209 @@
+//@version=6
+indicator("世界インデックス 買い時Pro（係数プリセット＋有効値ガイド）", overlay=true, shorttitle="IdxProK2")
+
+// ========= ユーティリティ =========
+f_clamp(v, vmin, vmax) => math.max(vmin, math.min(vmax, v))
+
+// ========= 基本表示 =========
+groupM = "基本"
+tfChoice   = input.string("自動", "解析時間足", options=["自動","4H","1D","1W"], group=groupM)
+showMA     = input.bool(true,  "基準MAを表示", group=groupM)
+showLabels = input.bool(true,  "シグナルラベル表示", group=groupM)
+showGuide  = input.bool(true,  "右上に“有効値ガイド”を表示", group=groupM)
+
+// ========= プリセット（ここを変えるだけで挙動が分かりやすく変わる） =========
+groupP = "プリセット（感度＋重み）"
+preset = input.string("標準", "感度プリセット", options=["控えめ","標準","積極"], group=groupP)
+// 内部の係数（プリセット依存）
+senseK = preset == "積極" ? 1.20 : preset == "控えめ" ? 0.95 : 1.00
+// 重み・閾値の推奨（プリセット依存）※“Effective(有効値)”として使用
+wPocket_eff   = preset == "積極" ? 2.2 : preset == "控えめ" ? 1.8 : 2.0
+wRebound_eff  = preset == "積極" ? 2.0 : preset == "控えめ" ? 1.3 : 1.5
+wConsec_eff   = 1.0
+wTouch_eff    = 1.0
+wRSI_eff      = 0.5
+lightTh_eff   = preset == "積極" ? 3.0 : preset == "控えめ" ? 4.0 : 3.5
+wDD_eff       = 2.0
+wCum_eff      = 1.5
+wSpike_eff    = preset == "積極" ? 2.3 : preset == "控えめ" ? 1.8 : 2.0
+wVol_eff      = 0.5
+wMACD_eff     = 0.5
+crashTh_eff   = preset == "積極" ? 3.5 : preset == "控えめ" ? 4.0 : 3.5
+anchorLookback= preset == "積極" ? 3 : 2
+
+// ========= 詳細（必要なら微調整） ※範囲をガイドで表示 =========
+groupL = "軽い押し（Light）詳細"
+aDisLow   = input.float(-6.5, "MA乖離 下限(%)", step=0.1, group=groupL)
+aDisHigh  = input.float( 0.0, "MA乖離 上限(%)", step=0.1, group=groupL)
+aRebMin   = input.float(0.45,"足内戻り 最小(レンジ比)", minval=0.30, maxval=0.90, step=0.01, group=groupL)
+aRsiMax   = input.int(60,     "RSI 最大", minval=1, maxval=100, group=groupL)
+downN     = input.int(3,      "連続陰線 本数", minval=2, maxval=6, group=groupL)
+touchLow  = input.float(-7.0, "MAタッチ許容 下限乖離(%)", step=0.1, group=groupL)
+
+groupC = "深押し（Crash）詳細"
+crLookback   = input.int(30,  "DD参照本数", minval=10, group=groupC)
+crDepthPct   = input.float(-10.0,"DD閾値(%) 以下", step=0.5, group=groupC)
+crImpulseN   = input.int(5,   "累積下落 本数", minval=2, maxval=30, group=groupC)
+crImpulsePct = input.float(-7.0,"累積下落率(%) 以下", step=0.5, group=groupC)
+spWickMin    = input.float(0.40,"スパイク 下ヒゲ比(レンジ比)", minval=0.30, maxval=0.90, step=0.01, group=groupC)
+spRebPos     = input.float(0.50,"スパイク 足内戻り(レンジ比)", minval=0.30, maxval=0.90, step=0.01, group=groupC)
+spDropPrev   = input.float(-2.5,"スパイク 前終値比下落(%) 以下", step=0.1, group=groupC)
+spDropPeak   = input.float(-5.0,"スパイク 高値比DD(%) 以下", step=0.1, group=groupC)
+
+groupS = "抑制"
+cdLight   = input.int(40,  "クールダウン（Light）", minval=1, group=groupS)
+cdCrash   = input.int(120, "クールダウン（Crash）", minval=1, group=groupS)
+clusterW  = input.int(80,  "同一クラスタ抑制（本）", minval=1, group=groupS)
+
+// ========= 解析時間足 =========
+f_pick_tf() =>
+    var string sel = "1D"
+    if tfChoice != "自動"
+        sel := tfChoice=="4H"?"240":tfChoice=="1D"?"1D":"1W"
+    else
+        if timeframe.isintraday
+            sel := timeframe.multiplier<=60 ? "240" : "1D"
+        else
+            sel := timeframe.isdaily ? "1D" : "1W"
+    sel
+tf = f_pick_tf()
+
+// ========= シリーズ =========
+symId = syminfo.tickerid
+o = request.security(symId, tf, open)
+c = request.security(symId, tf, close)
+h = request.security(symId, tf, high)
+l = request.security(symId, tf, low)
+v = nz(request.security(symId, tf, volume), 0)
+
+// ========= 指標 =========
+maLen = 100
+ma = ta.ema(c, maLen)
+dis = (c - ma) / ma * 100.0
+rsi = ta.rsi(c, 14)
+[macdLine, macdSignal, macdHist] = ta.macd(c, 12, 26, 9)
+macdReb = macdLine > macdLine[1] and macdHist > macdHist[1]
+volBoost = v > ta.sma(v, 5) * 1.5
+barRange = h - l
+rebInBar = barRange>0 ? (c - l)/barRange : 0.0
+bull = c > o
+
+// ========= ピボット（谷寄せ） =========
+isValley = not na(ta.pivotlow(l, 2, 2))
+valleyRecent = ta.barssince(isValley) <= anchorLookback
+
+// ========= プリセットに基づく“有効値” =========
+// Light 有効値（◯～◯ をガイド表示用にも使う）
+aDisLowX  = aDisLow  * (1 + (senseK - 1))            // 積極で下限を広げる
+aDisHighX = aDisHigh + (senseK - 1) * 0.5            // 積極で上限を+0.5%
+aRebMinX  = f_clamp(aRebMin - (senseK - 1) * 0.05, 0.30, 0.90)
+aRsiMaxX  = aRsiMax + int((senseK - 1) * 10)
+downNX    = math.max(2, downN - int((senseK - 1) * 1))
+touchLowX = touchLow * (1 + (senseK - 1) * 0.5)
+// Crash 有効値
+spWickMinX = f_clamp(spWickMin - (senseK - 1) * 0.05, 0.30, 0.90)
+spRebPosX  = f_clamp(spRebPos - (senseK - 1) * 0.05, 0.30, 0.90)
+spDropPrevX= spDropPrev + (senseK - 1) * 0.5
+spDropPeakX= spDropPeak + (senseK - 1) * 0.5
+
+// ========= Light スコア =========
+inPocket = dis >= aDisLowX and dis <= aDisHighX
+var int downCount = 0
+downCount := c < c[1] ? nz(downCount[1]) + 1 : 0
+maTouch = (l/ma - 1.0)*100.0 <= touchLowX
+reboundOK = (rebInBar >= aRebMinX) or bull
+
+float lightScore = 0.0
+lightScore += inPocket              ? wPocket_eff  : 0
+lightScore += reboundOK             ? wRebound_eff : 0
+lightScore += (downCount >= downNX) ? wConsec_eff  : 0
+lightScore += maTouch               ? wTouch_eff   : 0
+lightScore += (rsi <= aRsiMaxX)     ? wRSI_eff     : 0
+
+lightBuyRaw = lightScore >= lightTh_eff
+lightBuy    = lightBuyRaw and valleyRecent
+
+// ========= Crash スコア =========
+rollingPeak = ta.highest(h, crLookback)
+ddNow   = (c/rollingPeak - 1.0)*100.0
+cumDrop = (c/c[crImpulseN] - 1.0)*100.0
+
+lowerWick = math.max(math.min(o, c) - l, 0)
+wickRatio = barRange>0 ? lowerWick/barRange : 0.0
+rebSpikeOK = (rebInBar >= spRebPosX) or bull
+dropPrev = (l/c[1] - 1.0)*100.0
+dropPeak = (l/rollingPeak - 1.0)*100.0
+spikeOK  = (wickRatio >= spWickMinX) and rebSpikeOK and (dropPrev <= spDropPrevX or dropPeak <= spDropPeakX)
+
+float crashScore = 0.0
+crashScore += (ddNow   <= crDepthPct)   ? wDD_eff    : 0
+crashScore += (cumDrop <= crImpulsePct) ? wCum_eff   : 0
+crashScore += (spikeOK)                 ? wSpike_eff : 0
+crashScore += (volBoost ? wVol_eff  : 0)
+crashScore += (macdReb  ? wMACD_eff : 0)
+
+crashBuy = crashScore >= crashTh_eff
+
+// ========= 抑制 =========
+groupD = "抑制内部"
+var int lastLight = na
+var int lastCrash = na
+var int lastCluster = na
+cdLightOK = na(lastLight) or (bar_index - lastLight >= cdLight)
+cdCrashOK = na(lastCrash) or (bar_index - lastCrash >= cdCrash)
+clusterOK = na(lastCluster) or (bar_index - lastCluster >= clusterW)
+lightBuy := lightBuy and cdLightOK and clusterOK
+crashBuy := crashBuy and cdCrashOK and clusterOK
+if lightBuy or crashBuy
+    if lightBuy
+        lastLight := bar_index
+    if crashBuy
+        lastCrash := bar_index
+    if na(lastCluster) or bar_index - lastCluster >= clusterW
+        lastCluster := bar_index
+
+// ========= 描画 =========
+plot(showMA ? ma : na, color=color.blue, linewidth=2)
+plotshape(lightBuy and not crashBuy, location=location.belowbar, color=color.teal,  style=shape.triangleup, size=size.normal, text="BUY")
+plotshape(crashBuy,                    location=location.belowbar, color=color.green, style=shape.triangleup, size=size.large,  text="CRASH BUY")
+alertcondition(lightBuy or crashBuy, title="BUYサイン", message="買い時サイン")
+
+// ========= 有効値ガイド（右上） =========
+if showGuide
+    var table g = table.new(position.top_right, 2, 12, frame_color=color.gray, border_width=1)
+    if barstate.isfirst
+        table.cell(g, 0, 0, "プリセット", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 0, preset, text_color=color.white, bgcolor=color.new(color.black,0))
+        table.cell(g, 0, 1, "Light 乖離域", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 1, str.tostring(aDisLowX,"#.0")+"% ～ "+str.tostring(aDisHighX,"#.0")+"%", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 2, "足内戻り(同足)", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 2, "≥ "+str.tostring(aRebMinX,"#.00"), text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 3, "RSI 最大", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 3, str.tostring(aRsiMaxX), text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 4, "連続陰線 本数", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 4, "≥ "+str.tostring(downNX), text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 5, "MAタッチ許容", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 5, "乖離 ≤ "+str.tostring(touchLowX,"#.0")+"%", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 6, "Light しきい値", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 6, str.tostring(lightTh_eff,"#.0")+" 点", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 7, "Crash DD/累積", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 7, "DD≤"+str.tostring(crDepthPct,"#.0")+"% / 累積≤"+str.tostring(crImpulsePct,"#.0")+"%", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 8, "スパイク条件", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 8, "ヒゲ≥"+str.tostring(spWickMinX,"#.00")+            " 戻り≥"+str.tostring(spRebPosX,"#.00")+            " 下落≤"+str.tostring(spDropPrevX,"#.0")+"% or "+str.tostring(spDropPeakX,"#.0")+"%", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0, 9, "Crash しきい値", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1, 9, str.tostring(crashTh_eff,"#.0")+" 点", text_color=color.white, bgcolor=color.black)
+        table.cell(g, 0,10, "CD/クラスタ", text_color=color.white, bgcolor=color.new(color.gray,80))
+        table.cell(g, 1,10, "Light "+str.tostring(cdLight)+" / Crash "+str.tostring(cdCrash)+            " / Cluster "+str.tostring(clusterW), text_color=color.white, bgcolor=color.black)
+    else
+        // 更新（値だけ上書き）
+        table.cell(g, 1, 0, preset)
+        table.cell(g, 1, 1, str.tostring(aDisLowX,"#.0")+"% ～ "+str.tostring(aDisHighX,"#.0")+"%")
+        table.cell(g, 1, 2, "≥ "+str.tostring(aRebMinX,"#.00"))
+        table.cell(g, 1, 3, str.tostring(aRsiMaxX))
+        table.cell(g, 1, 4, "≥ "+str.tostring(downNX))
+        table.cell(g, 1, 5, "乖離 ≤ "+str.tostring(touchLowX,"#.0")+"%")
+        table.cell(g, 1, 6, str.tostring(lightTh_eff,"#.0")+" 点")
+        table.cell(g, 1, 7, "DD≤"+str.tostring(crDepthPct,"#.0")+"% / 累積≤"+str.tostring(crImpulsePct,"#.0")+"%")
+        table.cell(g, 1, 8, "ヒゲ≥"+str.tostring(spWickMinX,"#.00")+            " 戻り≥"+str.tostring(spRebPosX,"#.00")+            " 下落≤"+str.tostring(spDropPrevX,"#.0")+"% or "+str.tostring(spDropPeakX,"#.0")+"%")
+        table.cell(g, 1, 9, str.tostring(crashTh_eff,"#.0")+" 点")
+        table.cell(g, 1,10, "Light "+str.tostring(cdLight)+" / Crash "+str.tostring(cdCrash)+            " / Cluster "+str.tostring(clusterW))
