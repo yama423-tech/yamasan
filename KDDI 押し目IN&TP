@@ -1,0 +1,115 @@
+//@version=6
+indicator("9433 KDDI 押し目IN＋TP/SL", overlay=true, shorttitle="KDDI押IN")
+
+// ========== モード ==========
+groupMode = "運用モード"
+mode = input.string("スイング", "モード", options=["短期","スイング","中期"], group=groupMode)
+
+// 固定長（simple int）を維持
+int rsiLen = 14, atrLen = 14, maFast = 20, maMid = 60, maLong = 200
+float slMult = 1.2, tp1Mult = 1.2, tp2Mult = 2.0
+if mode == "短期"
+    rsiLen := 14, atrLen := 14, maFast := 10, maMid := 40, maLong := 150
+    slMult := 1.0, tp1Mult := 1.0, tp2Mult := 1.6
+else if mode == "中期"
+    rsiLen := 20, atrLen := 20, maFast := 30, maMid := 75, maLong := 240
+    slMult := 1.5, tp1Mult := 1.5, tp2Mult := 2.5
+
+// ========== 基本指標 ==========
+bbLen = 20, bbK = 2.0
+basis = ta.sma(close, bbLen)
+dev   = ta.stdev(close, bbLen)
+upper = basis + bbK*dev
+lower = basis - bbK*dev
+
+rsi = ta.rsi(close, rsiLen)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+maF = ta.ema(close, maFast)
+maM = ta.ema(close, maMid)
+maL = ta.sma(close, maLong)
+atr = ta.atr(atrLen)
+
+// ========== 判定 ==========
+slopeL   = maL - maL[5]
+trendUp  = (close > maL) and (slopeL > 0) and (maF > maM)
+pullbackZone = (close <= basis) and (close >= lower)
+rsiOk    = rsi > 40 and rsi < 56
+macdRise = macdHist > macdHist[1]
+isPullback = trendUp and pullbackZone and rsiOk and macdRise
+
+barsSincePull = ta.barssince(isPullback)   // 先に評価して警告回避
+in1 = ta.crossover(close, basis) and (barsSincePull >= 0 and barsSincePull < 10)
+
+// 第2波：IN1発生後の高値更新
+var bool afterIn1 = false
+afterIn1 := in1 ? true : afterIn1
+prevHigh20 = ta.highest(high, 20)[1]
+in2 = afterIn1 and close > prevHigh20
+
+// ========== 状態管理 ==========
+var int   state = 0               // 0:待機 1:第1波 2:第2波
+var float entry = na
+var float sl    = na
+var float tp1   = na
+var float tp2   = na
+
+if ta.barssince(in1) == 0
+    state := 1
+    entry := close
+    sl := entry - atr*slMult
+    tp1 := entry + atr*tp1Mult
+    tp2 := entry + atr*tp2Mult
+
+if ta.barssince(in2) == 0
+    state := 2
+    entry := close
+    sl := entry - atr*slMult
+    tp1 := entry + atr*tp1Mult
+    tp2 := entry + atr*tp2Mult
+
+slHit  = state > 0 and low  <= sl
+tp1Hit = state > 0 and high >= tp1
+tp2Hit = state > 0 and high >= tp2
+
+if slHit or tp2Hit
+    state := 0
+    entry := na
+    sl := na
+    tp1 := na
+    tp2 := na
+    afterIn1 := false
+
+// ========== 描画 ==========
+plot(basis, "BB Basis", color=#7f9f7f, linewidth=2)
+plot(upper, "BB Upper", color=color.new(#a0a0ff, 30))
+plot(lower, "BB Lower", color=color.new(#a0a0ff, 30))
+plot(maL, "長期MA", color=color.orange, linewidth=2)
+plot(maM, "中期MA", color=color.yellow)
+plot(maF, "短期MA", color=color.teal)
+
+plot(state > 0 ? entry : na, "Entry", color=color.white, linewidth=2, style=plot.style_linebr)
+plot(state > 0 ? sl    : na, "SL",    color=color.red,   linewidth=2, style=plot.style_linebr)
+plot(state > 0 ? tp1   : na, "TP1",   color=color.green, linewidth=2, style=plot.style_linebr)
+plot(state > 0 ? tp2   : na, "TP2",   color=color.new(color.green,50), linewidth=2, style=plot.style_linebr)
+
+plotshape(in1,  "IN 第1波", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.large, text="IN1")
+plotshape(in2,  "IN 第2波", style=shape.triangleup, location=location.belowbar, color=color.aqua, size=size.large, text="IN2")
+plotshape(slHit,  "SL Hit", style=shape.flag,    location=location.abovebar, color=color.red,   text="SL",  size=size.small)
+plotshape(tp1Hit, "TP1 Hit",style=shape.circle,  location=location.abovebar, color=color.green, text="TP1", size=size.tiny)
+plotshape(tp2Hit, "TP2 Hit",style=shape.circle,  location=location.abovebar, color=color.new(color.green,60), text="TP2", size=size.tiny)
+
+// ========== アラート ==========
+alertcondition(in1,   "KDDI IN 第1波", "KDDI｜第1波エントリー")
+alertcondition(in2,   "KDDI IN 第2波", "KDDI｜第2波エントリー（高値ブレイク）")
+alertcondition(tp1Hit,"KDDI TP1",      "KDDI｜TP1到達（部分利確）")
+alertcondition(tp2Hit,"KDDI TP2",      "KDDI｜TP2到達（最終利確）")
+alertcondition(slHit, "KDDI Stop",     "KDDI｜ストップロス到達")
+
+// ========== 状態ラベル（1個だけ） ==========
+var label info = na
+if barstate.islast
+    if not na(info)
+        label.delete(info)
+    txt = "モード: " + mode +          "\nRSI: " + str.tostring(rsi, "#.0") + " / MACD: " + str.tostring(macdHist, "#.2") +         "\nTrendUp: " + str.tostring(trendUp) + "  Pullback: " + str.tostring(isPullback) +          (state > 0 ? "\nEntry " + str.tostring(entry, "#.0") + "  SL " + str.tostring(sl, "#.0") +                        "  TP1 " + str.tostring(tp1, "#.0") + "  TP2 " + str.tostring(tp2, "#.0") : "\n待機中")
+    info := label.new(bar_index, close, txt, xloc=xloc.bar_index, yloc=yloc.price,
+                      style=label.style_label_right, textcolor=color.white, color=color.new(color.black,40), size=size.small)
