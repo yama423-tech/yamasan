@@ -1,0 +1,151 @@
+//@version=6
+indicator("1570 日経レバ｜順張りブレイクIN【指数系】v6（表示強化・予告/確定マーカー）", overlay=true)
+
+// ===== ユーティリティ =====
+f_ck(cond) => cond ? "✔" : "—"
+f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
+
+// ===== パラメータ =====
+group_sig = "シグナル条件"
+group_risk = "利確/逆指値"
+group_view = "表示/凡例"
+group_dbg = "デバッグ"
+
+volMult = input.float(2.0, "出来高倍率（平均比）", step=0.1, group=group_sig)
+volLen = input.int(60, "出来高平均期間（バー数）", group=group_sig)
+ibBars = input.int(4, "初動計測本数（IB）", minval=2, maxval=8, group=group_sig)
+usePrevHigh = input.bool(true, "前日高値ブレイクも条件に含める", group=group_sig)
+rsiTh = input.int(52, "RSIしきい値", minval=40, maxval=70, group=group_sig)
+
+tp1Pct = input.float(0.015, "利確①（+%）", step=0.005, group=group_risk)
+tp2Pct = input.float(0.03, "利確②（+%）", step=0.005, group=group_risk)
+atrMultSL = input.float(1.2, "逆指値：ATR倍率", step=0.05, group=group_risk)
+atrLen = input.int(14, "ATR期間", group=group_risk)
+
+showLegend = input.bool(true, "凡例ラベルを表示（右上）", group=group_view)
+showVWAP = input.bool(true, "VWAPを表示", group=group_view)
+showLevels = input.bool(true, "TP/SLラインを表示", group=group_view)
+showPreview = input.bool(true, "予告IN（未確定）マーカーも表示", group=group_view)
+showDebug = input.bool(false, "各条件の点マーカー（上：OK/下：NG）", group=group_dbg)
+
+// ===== 高次足参照（前日高値）=====
+prevHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// ===== IB初動 =====
+var float ibHigh = na
+var int barsInSession = 0
+newDay = ta.change(time("D")) != 0
+
+if newDay
+    ibHigh := na
+    barsInSession := 0
+else if barstate.isconfirmed
+    barsInSession += 1
+
+if na(ibHigh)
+    ibHigh := high
+
+if barstate.isconfirmed and barsInSession <= ibBars
+    ibHigh := math.max(ibHigh, high)
+
+// ===== 条件 =====
+volAvg = ta.sma(volume, volLen)
+volOK = volume > volAvg * volMult
+
+[macd, sig, _] = ta.macd(close, 12, 26, 9)
+macdUp = ta.crossover(macd, sig)
+
+vwapVal = ta.vwap(hlc3)
+vwapOK = close > vwapVal
+
+rsi = ta.rsi(close, 14)
+rsiOK = rsi > rsiTh
+
+ibCross = ta.crossover(close, ibHigh)
+ibBreak = barsInSession > ibBars and ibCross
+prevCross = ta.crossover(close, prevHigh)
+prevBreak = usePrevHigh ? prevCross : false
+breakOK = ibBreak or prevBreak
+
+entryRaw = volOK and macdUp and vwapOK and rsiOK and breakOK // 未確定でも点灯（予告）
+entryConfirmed = entryRaw and barstate.isconfirmed // 確定足のみ
+
+// ===== ポジ管理 =====
+var float entryPrice = na
+if entryConfirmed and na(entryPrice)
+    entryPrice := close
+
+atr = ta.atr(atrLen)
+tp1 = na(entryPrice) ? na : entryPrice * (1 + tp1Pct)
+tp2 = na(entryPrice) ? na : entryPrice * (1 + tp2Pct)
+sl = na(entryPrice) ? na : entryPrice - atr * atrMultSL
+
+tp1Hit = not na(tp1) and close >= tp1 and barstate.isconfirmed
+tp2Hit = not na(tp2) and close >= tp2 and barstate.isconfirmed
+slHit = not na(sl) and close <= sl and barstate.isconfirmed
+exitHit = tp1Hit or tp2Hit or slHit
+if exitHit
+    entryPrice := na
+
+// ===== 表示（ラインなど）=====
+plot(ibHigh, title="初動高値(IB)", color=color.new(color.orange, 0))
+plot(usePrevHigh ? prevHigh : na, title="前日高値", color=color.new(color.purple, 0))
+plot(showVWAP ? vwapVal : na, title="VWAP", color=color.new(color.teal, 60))
+plot(showLevels ? tp1 : na, title="TP1(+)", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels ? tp2 : na, title="TP2(++)", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels ? sl : na, title="SL(ATR×倍率)", color=color.new(color.red, 0), style=plot.style_linebr)
+
+// ===== マーカー（ここを強化）=====
+// 予告IN（未確定）…薄い緑の小三角
+plotshape(showPreview and entryRaw, title="IN予告", style=shape.triangleup,
+     location=location.belowbar, color=color.new(color.lime, 40), size=size.tiny, text="IN?")
+
+// 確定IN…濃い緑の大三角（必ず表示されるように）
+plotshape(entryConfirmed, title="IN（確定）", style=shape.triangleup,
+     location=location.belowbar, color=color.new(color.lime, 0), size=size.large, text="IN")
+
+// 利確/損切り（確定足で）
+plotshape(tp1Hit, title="TP①", style=shape.circle,
+     location=location.abovebar, color=color.new(color.green, 0), size=size.normal, text="TP①")
+plotshape(tp2Hit, title="TP②", style=shape.circle,
+     location=location.abovebar, color=color.new(color.green, 0), size=size.normal, text="TP②")
+plotshape(slHit, title="STOP", style=shape.triangledown,
+     location=location.abovebar, color=color.new(color.red, 0), size=size.large, text="STOP")
+
+// ===== デバッグ：条件の可視化（OK=上に点／NG=下に点）=====
+plotshape(showDebug and volOK, title="volOK", style=shape.circle, color=color.new(color.white, 0), location=location.abovebar, size=size.tiny)
+plotshape(showDebug and not volOK, title="volNG", style=shape.circle, color=color.new(color.gray, 0), location=location.belowbar, size=size.tiny)
+plotshape(showDebug and macdUp, title="macdUp", style=shape.circle, color=color.new(color.white, 0), location=location.abovebar, size=size.tiny, offset=0)
+plotshape(showDebug and vwapOK, title="vwapOK", style=shape.circle, color=color.new(color.white, 0), location=location.abovebar, size=size.tiny, offset=0)
+plotshape(showDebug and rsiOK, title="rsiOK", style=shape.circle, color=color.new(color.white, 0), location=location.abovebar, size=size.tiny, offset=0)
+plotshape(showDebug and breakOK, title="breakOK", style=shape.circle, color=color.new(color.yellow, 0), location=location.abovebar, size=size.tiny, offset=0)
+
+// ===== 凡例（ラベル）=====
+var label legend = na
+if showLegend
+    topRef = math.max(nz(ibHigh, high), nz(prevHigh, high), nz(vwapVal, high), high)
+    yPos = topRef + nz(atr, ta.tr) * 0.6
+    txt = "【凡例】 ✔=OK／—=NG\n" +
+         "出来高>平均×倍率 : " + f_ck(volOK) + " (" + str.tostring(volume) + " / " + str.tostring(math.round(volAvg * volMult)) + ")\n" +
+         "MACD GC : " + f_ck(macdUp) + " (MACD " + f2(macd) + " / SIG " + f2(sig) + ")\n" +
+         "VWAP上(終値>VWAP) : " + f_ck(vwapOK) + " (" + f2(close) + " / " + f2(vwapVal) + ")\n" +
+         "RSI>" + str.tostring(rsiTh) + " : " + f_ck(rsiOK) + " (" + f2(rsi) + ")\n" +
+         "ブレイク(IB/前日) : " + f_ck(breakOK) + " (" + (ibBreak ? "IB " : "") + (prevBreak ? "Prev" : "") + ")\n" +
+         "▶ 総合IN条件 : " + f_ck(entryRaw) + (entryConfirmed ? " [確定]" : "") + "\n" +
+         "EP/TP1/TP2/SL : " + f2(entryPrice) + " / " + f2(tp1) + " / " + f2(tp2) + " / " + f2(sl)
+    if na(legend)
+        legend := label.new(bar_index, yPos, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_right, textcolor=color.white, color=color.new(color.black, 70), size=size.small)
+    else
+        label.set_x(legend, bar_index)
+        label.set_y(legend, yPos)
+        label.set_text(legend, txt)
+else
+    if not na(legend)
+        label.delete(legend)
+        legend := na
+
+// ===== アラート =====
+alertcondition(entryConfirmed, title="1570 IN", message="[1570] 出来高↑×MACD↑×VWAP上×ブレイク → 順張りIN（確定）")
+alertcondition(tp1Hit, title="1570 TP①", message="[1570] 利確①到達（+1.5%）")
+alertcondition(tp2Hit, title="1570 TP②", message="[1570] 利確②到達（+3%）")
+alertcondition(slHit, title="1570 STOP", message="[1570] 逆指値（ATR×1.2）割れ → 撤退（確定）")
