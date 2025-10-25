@@ -1,0 +1,239 @@
+//@version=6
+indicator("有望20銘柄用：第1/第2/第3波＋TP/SL帯（時間足自動×ダイバ×暴落×第3波専用TP）",
+     overlay=true,
+     shorttitle="WTP20",
+     scale=scale.right)  // チャートと同スケール固定
+
+// ========= 可視性 =========
+groupVis = "可視性"
+showMA        = input.bool(true, "MA100/200を表示", group=groupVis)
+showBBbasis   = input.bool(false, "BB基準線を表示", group=groupVis)
+lookbackBars  = input.int(500, "直近だけ描画：バー数", minval=200, step=100, group=groupVis)
+useAlert      = input.bool(true, "アラートON", inline="AL", group=groupVis)
+placeLabel    = input.bool(true, "右上に状態ラベル", inline="AL", group=groupVis)
+
+// ========= 時間足最適化 =========
+groupTF = "時間足最適化"
+tfMode   = input.string("自動", "最適化モード", options=["自動","手動"], group=groupTF)
+tfManual = input.string("スイング", "（手動時）モード", options=["短期","スイング","中期","長期"], group=groupTF)
+
+var string tfClass = "日足"
+tf_is_min   = timeframe.isminutes
+tf_mult     = timeframe.multiplier
+tf_is_day   = timeframe.isdaily
+tf_is_week  = timeframe.isweekly
+tf_is_month = timeframe.ismonthly
+tfClass := tf_is_min ? (tf_mult <= 15 ? "超短期(≤15m)" : tf_mult <= 60 ? "短期(≤60m)" : "短期(>60m)") : tf_is_day ? "日足" : tf_is_week ? "週足" : tf_is_month ? "月足" : "その他"
+
+// ========= モード別パラメータ =========
+var int maFast = 20, maMid = 60, maLong = 200
+var int atrLen = 14, adxLen = 14
+var float slMult = 1.2, tp1Mult = 1.2, tp2Mult = 2.0
+var float volMult = 1.2
+var int volLen = 60
+
+var string autoMode = "スイング"
+autoMode := tf_is_min ? (tf_mult <= 15 ? "短期" : tf_mult <= 60 ? "スイング" : "中期") : tf_is_day ? "スイング" : tf_is_week ? "中期" : tf_is_month ? "長期" : "スイング"
+
+string selMode = tfMode == "自動" ? autoMode : tfManual
+if selMode == "短期"
+    maFast := 10, maMid := 40, maLong := 150, atrLen := 12, adxLen := 12, slMult := 1.0, tp1Mult := 1.0, tp2Mult := 1.6, volMult := 1.1, volLen := 40
+else if selMode == "スイング"
+    maFast := 20, maMid := 60, maLong := 200, atrLen := 14, adxLen := 14, slMult := 1.2, tp1Mult := 1.2, tp2Mult := 2.0, volMult := 1.2, volLen := 60
+else if selMode == "中期"
+    maFast := 30, maMid := 90, maLong := 220, atrLen := 18, adxLen := 18, slMult := 1.3, tp1Mult := 1.3, tp2Mult := 2.2, volMult := 1.25, volLen := 80
+else
+    maFast := 40, maMid := 120, maLong := 260, atrLen := 20, adxLen := 20, slMult := 1.4, tp1Mult := 1.4, tp2Mult := 2.4, volMult := 1.3, volLen := 100
+
+// ========= ADX自前実装 =========
+f_adx(_len) =>
+    tr  = ta.tr(true)
+    up  = ta.change(high)
+    dn  = -ta.change(low)
+    plusDM  = (up > dn and up > 0)  ? up : 0
+    minusDM = (dn > up and dn > 0)  ? dn : 0
+    trRma   = ta.rma(tr, _len)
+    pdmRma  = ta.rma(plusDM, _len)
+    mdmRma  = ta.rma(minusDM, _len)
+    pDI = trRma == 0 ? 0 : 100 * (pdmRma / trRma)
+    mDI = trRma == 0 ? 0 : 100 * (mdmRma / trRma)
+    dx  = (pDI + mDI == 0) ? 0 : 100 * math.abs(pDI - mDI) / (pDI + mDI)
+    ta.rma(dx, _len)
+
+// ========= トレンド・出来高 =========
+emaF = ta.ema(close, maFast)
+emaM = ta.ema(close, maMid)
+emaL = ta.ema(close, maLong)
+atr  = ta.atr(atrLen)
+adx  = f_adx(adxLen)
+
+volAvg = ta.sma(volume, volLen)
+trendUp = emaF > emaM and emaM > emaL
+trendDn = emaF < emaM and emaM < emaL
+volOK = volume > volAvg * volMult
+
+// ========= ピボット・波形検出 =========
+ph = ta.pivothigh(high,3,3)
+pl = ta.pivotlow(low,3,3)
+lastSwingHigh = ta.valuewhen(not na(ph), ph, 0)
+prevSwingHigh = ta.valuewhen(not na(ph), ph, 1)
+lastSwingLow  = ta.valuewhen(not na(pl), pl, 0)
+prevSwingLow  = ta.valuewhen(not na(pl), pl, 1)
+
+adxK = 20.0
+wave1_base = trendUp and volOK and adx > adxK and not na(lastSwingHigh) and close > lastSwingHigh
+var bool wave1Context = false
+var int wave1Bar = na
+if wave1_base
+    wave1Context := true
+    wave1Bar := bar_index
+else
+    wave1Context := wave1Context and (bar_index - nz(wave1Bar, bar_index) < 200)
+
+pullbackOK = math.abs(close - emaM) <= atr * 0.6
+reboundOK  = ta.crossover(close, emaF)
+wave2_base = wave1Context and trendUp and adx > adxK*0.95 and pullbackOK and reboundOK
+
+var bool wave2Context = false
+var int wave2Bar = na
+if wave2_base
+    wave2Context := true
+    wave2Bar := bar_index
+else
+    wave2Context := wave2Context and (bar_index - nz(wave2Bar, bar_index) < 200)
+
+newHighRef = na(lastSwingHigh)?high[1]:lastSwingHigh
+reAccel = close > math.max(newHighRef,nz(prevSwingHigh,newHighRef)) and adx > adxK*1.02 and volOK
+wave3_raw = (wave2Context or wave1Context) and trendUp and reAccel
+
+// ========= ダイバージェンス（簡易） =========
+rsi = ta.rsi(close,14)
+macdLine = ta.ema(close,12) - ta.ema(close,26)
+rsiPH = ta.pivothigh(rsi,5,5)
+macdPH = ta.pivothigh(macdLine,5,5)
+priceHH = not na(lastSwingHigh) and not na(prevSwingHigh) and lastSwingHigh > prevSwingHigh
+bearDiv = priceHH and ((not na(rsiPH) and rsiPH < rsiPH[1]) or (not na(macdPH) and macdPH < macdPH[1]))
+wave3_div = wave3_raw and not bearDiv
+
+// ========= 暴落フィルタ（簡易） =========
+crashLookback = 60
+crashDrawdown = 8.0
+reboundWindow = 20
+recentPeak = ta.highest(high, crashLookback)
+ddPct = (recentPeak - close)/recentPeak*100.0
+crashNow = ddPct >= crashDrawdown
+var int lastCrashBar = na
+if ta.change(crashNow) and crashNow
+    lastCrashBar := bar_index
+inPostCrash = not na(lastCrashBar) and (bar_index-lastCrashBar<=reboundWindow)
+reboundCond = ta.crossover(close,emaF)
+f_applyCrash(sig)=> (not crashNow and sig) or (inPostCrash and reboundCond and sig)
+wave1=f_applyCrash(wave1_base)
+wave2=f_applyCrash(wave2_base)
+wave3=f_applyCrash(wave3_div)
+
+// ========= トレード状態管理（最新のみ） =========
+var bool  inTrade = false
+var int   tradeEntryBar = na
+var float tradeEntry = na
+var float tradeTP1 = na
+var float tradeTP2 = na
+var float tradeSL = na
+var string tradeType = ""
+var bool hitTP1_once = false
+var bool hitTP2_once = false
+var bool hitSL_once  = false
+
+newEntry = (wave1 or wave2 or wave3) and barstate.isconfirmed
+if newEntry
+    tradeType := wave1 ? "第1波" : wave2 ? "第2波" : "第3波"
+    tradeEntry := close
+    tradeEntryBar := bar_index
+    inTrade := true
+    tp1K_eff = tradeType == "第3波" ? 1.6 : tp1Mult
+    tp2K_eff = tradeType == "第3波" ? 2.6 : tp2Mult
+    slK_eff  = tradeType == "第3波" ? 1.1 : slMult
+    tradeTP1 := tradeEntry + atr * tp1K_eff
+    tradeTP2 := tradeEntry + atr * tp2K_eff
+    tradeSL  := tradeEntry - atr * slK_eff
+    hitTP1_once := false
+    hitTP2_once := false
+    hitSL_once  := false
+
+// ========= TP/SL帯（ライン固定） =========
+entryPrice = inTrade ? tradeEntry : na
+tp1 = inTrade ? tradeTP1 : na
+tp2 = inTrade ? tradeTP2 : na
+sl  = inTrade ? tradeSL  : na
+
+// 水平ラインで固定表示
+var line lnEN = na
+var line lnTP1 = na
+var line lnTP2 = na
+var line lnSL = na
+
+if inTrade
+    if na(lnEN)
+        lnEN  := line.new(bar_index, entryPrice, bar_index+1, entryPrice, extend=extend.right, color=color.new(color.blue,70))
+        lnTP1 := line.new(bar_index, tp1, bar_index+1, tp1, extend=extend.right, color=color.new(color.green,0))
+        lnTP2 := line.new(bar_index, tp2, bar_index+1, tp2, extend=extend.right, color=color.new(color.green,0))
+        lnSL  := line.new(bar_index, sl, bar_index+1, sl, extend=extend.right, color=color.new(color.red,0))
+    else
+        line.set_xy1(lnEN, bar_index, entryPrice), line.set_xy2(lnEN, bar_index+1, entryPrice)
+        line.set_xy1(lnTP1, bar_index, tp1), line.set_xy2(lnTP1, bar_index+1, tp1)
+        line.set_xy1(lnTP2, bar_index, tp2), line.set_xy2(lnTP2, bar_index+1, tp2)
+        line.set_xy1(lnSL, bar_index, sl), line.set_xy2(lnSL, bar_index+1, sl)
+else
+    if not na(lnEN)
+        line.delete(lnEN), lnEN := na
+        line.delete(lnTP1), lnTP1 := na
+        line.delete(lnTP2), lnTP2 := na
+        line.delete(lnSL), lnSL := na
+
+// ========= TP/SLヒット監視 =========
+activeTrade = inTrade and (bar_index - tradeEntryBar <= 200)
+condTP1 = activeTrade and not hitTP1_once and high >= tradeTP1
+condTP2 = activeTrade and not hitTP2_once and high >= tradeTP2
+condSL  = activeTrade and not hitSL_once  and low <= tradeSL
+plotshape(condTP1, title="TP1到達", style=shape.circle, location=location.abovebar, color=color.new(color.green,0), size=size.tiny, text="TP1")
+plotshape(condTP2, title="TP2到達", style=shape.circle, location=location.abovebar, color=color.new(color.green,0), size=size.tiny, text="TP2")
+plotshape(condSL,  title="SL到達",  style=shape.circle, location=location.belowbar, color=color.new(color.red,0), size=size.tiny, text="SL")
+
+if condTP1
+    hitTP1_once := true
+if condTP2
+    hitTP2_once := true
+if condSL
+    hitSL_once := true
+if (condTP2 or condSL)
+    inTrade := false
+    tradeEntry := na
+    tradeTP1 := na
+    tradeTP2 := na
+    tradeSL := na
+
+// ========= 波マーカー =========
+plotshape(wave1, title="第1波", style=shape.triangleup, location=location.belowbar, color=color.new(color.green,0), size=size.large, text="第1波")
+plotshape(wave2, title="第2波", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal,0), size=size.large, text="第2波")
+plotshape(wave3, title="第3波", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime,0), size=size.large, text="第3波")
+
+// ========= ステータス表示 =========
+var label statLbl = na
+if placeLabel and barstate.islast
+    modeTxt = tfMode == "自動" ? "自動（" + tfClass + "→" + autoMode + "）" : "手動（" + tfManual + "）"
+    mTrend = trendUp ? "上昇" : trendDn ? "下降" : "レンジ"
+    txt = "最適化: " + modeTxt +
+          "｜トレンド: " + mTrend + "｜ADX: " + str.tostring(adx, format.mintick) +
+          "\n直近シグナル: " + (inTrade ? tradeType + " @" + str.tostring(tradeEntry, format.mintick) : "なし") +
+          "｜TP1/TP2/SL: " + (inTrade ? str.tostring(tradeTP1, format.mintick) + " / " + str.tostring(tradeTP2, format.mintick) + " / " + str.tostring(tradeSL, format.mintick) : "-")
+    if not na(statLbl)
+        label.delete(statLbl)
+    statLbl := label.new(bar_index, high, txt, style=label.style_label_upper_right, textcolor=color.white, color=color.new(color.black,0), size=size.normal)
+
+// ========= アラート =========
+alertcondition(useAlert and wave1, title="第1波IN", message="第1波IN（{ticker} @{{close}}）")
+alertcondition(useAlert and wave2, title="第2波IN", message="第2波IN（{ticker} @{{close}}）")
+alertcondition(useAlert and wave3, title="第3波IN", message="第3波IN（{ticker} @{{close}}）")
+alertcondition(useAlert and condTP1, title="TP1到達", message="TP1到達（{ticker}）")
+alertcondition(useAlert and condTP2, title="TP2到達", message="TP2到達（{ticker}）")
+alertcondition(useAlert and condSL,  title="SL到達",  message="SL到達（{ticker}）")
