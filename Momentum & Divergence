@@ -1,0 +1,149 @@
+//@version=6
+indicator("Momentum & Divergence v6.2 Stable (= only)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ===== Inputs =====
+src       = input.source(close, "価格ソース")
+rsiLen    = input.int(14, "RSI期間", minval=2)
+rsiUp     = input.int(60, "RSIモメ基準(上昇) >", minval=50, maxval=80)
+rsiDn     = input.int(40, "RSIモメ基準(下降) <", minval=20, maxval=50)
+
+fast = input.int(12, "MACD Fast")
+slow = input.int(26, "MACD Slow")
+sig  = input.int(9,  "MACD Signal")
+
+// ダイバ（ピボット確定方式）
+L  = input.int(8, "Pivot 左", minval=2, maxval=20)
+R  = input.int(8, "Pivot 右", minval=2, maxval=20)
+minGapBars = input.int(15, "前回Pivotからの最小間隔(バー)", minval=1, maxval=200)
+
+// 出来高フィルタ
+useVolFilt = input.bool(true,  "出来高スパイクでフィルタ")
+volLen     = input.int(20,     "出来高SMA期間", minval=2)
+volMult    = input.float(1.5,  "出来高倍率しきい値", minval=1.0, step=0.1)
+
+// 表示
+useRSI   = input.bool(true,  "RSIでダイバ判定")
+useMACDh = input.bool(true,  "MACDヒストでダイバ判定")
+showLines  = input.bool(true, "ダイバージェンス補助線")
+showLabels = input.bool(true, "ラベル表示")
+
+// ===== Core calcs =====
+rsi = ta.rsi(src, rsiLen)
+macdLine   = ta.ema(src, fast) - ta.ema(src, slow)
+signalLine = ta.ema(macdLine, sig)
+hist       = macdLine - signalLine
+
+volSma   = ta.sma(volume, volLen)
+volSpike = volume > volSma * volMult
+
+// ===== Momentum (初動のみ) =====
+momUp = ta.crossover(hist, 0) and (rsi > rsiUp) and (not useVolFilt or volSpike)
+momDn = ta.crossunder(hist, 0) and (rsi < rsiDn) and (not useVolFilt or volSpike)
+
+// ===== Divergence helpers =====
+// Bull: 価格LL & オシレータHL
+f_bull_div(srcSeries, oscSeries, bool useVol, series bool volSeries, string tag, color colLine) =>
+    pl = ta.pivotlow(srcSeries, L, R)
+    ol = ta.pivotlow(oscSeries, L, R)
+
+    // 永続保持（関数内スコープ）
+    var float prevPL = na
+    var float prevOL = na
+    var int   prevBar = na
+
+    // 返却
+    bool isBull = false
+    int  trigBar = na
+
+    if not na(pl) and not na(ol)
+        currBar = bar_index - R
+        currPL  = pl
+        currOL  = ol
+
+        gapOK = not na(prevBar) ? (currBar - prevBar >= minGapBars) : false
+        volOK = (not useVol) or volSeries[R]
+
+        if gapOK and (currPL < prevPL) and (currOL > prevOL) and volOK
+            isBull = true
+            trigBar = currBar
+            if showLines
+                line.new(prevBar, prevPL, currBar, currPL, xloc=xloc.bar_index, color=colLine, width=2)
+                line.new(prevBar, prevOL, currBar, currOL, xloc=xloc.bar_index, color=colLine, width=2, style=line.style_dotted)
+            if showLabels
+                label.new(currBar, currPL, text=tag + " BullDiv", style=label.style_label_up, textcolor=color.white, color=colLine)
+
+        // 更新（次回比較用）
+        prevPL := currPL
+        prevOL := currOL
+        prevBar := currBar
+
+    [isBull, trigBar]
+
+// Bear: 価格HH & オシレータLH
+f_bear_div(srcSeries, oscSeries, bool useVol, series bool volSeries, string tag, color colLine) =>
+    ph = ta.pivothigh(srcSeries, L, R)
+    oh = ta.pivothigh(oscSeries, L, R)
+
+    var float prevPH = na
+    var float prevOH = na
+    var int   prevBar = na
+
+    bool isBear = false
+    int  trigBar = na
+
+    if not na(ph) and not na(oh)
+        currBar = bar_index - R
+        currPH  = ph
+        currOH  = oh
+
+        gapOK = not na(prevBar) ? (currBar - prevBar >= minGapBars) : false
+        volOK = (not useVol) or volSeries[R]
+
+        if gapOK and (currPH > prevPH) and (currOH < prevOH) and volOK
+            isBear = true
+            trigBar = currBar
+            if showLines
+                line.new(prevBar, prevPH, currBar, currPH, xloc=xloc.bar_index, color=colLine, width=2)
+                line.new(prevBar, prevOH, currBar, currOH, xloc=xloc.bar_index, color=colLine, width=2, style=line.style_dotted)
+            if showLabels
+                label.new(currBar, currPH, text=tag + " BearDiv", style=label.style_label_down, textcolor=color.white, color=colLine)
+
+        prevPH := currPH
+        prevOH := currOH
+        prevBar := currBar
+
+    [isBear, trigBar]
+
+// ===== Divergence detection (分解代入は常に「=」で新規） =====
+[bRSI,  bRSIbar ] = f_bull_div(src, rsi,  useVolFilt, volSpike, "RSI",  color.teal)
+[sRSI,  sRSIbar ] = f_bear_div(src, rsi,  useVolFilt, volSpike, "RSI",  color.orange)
+[bMACD, bMACDbar] = f_bull_div(src, hist, useVolFilt, volSpike, "MACD", color.lime)
+[sMACD, sMACDbar] = f_bear_div(src, hist, useVolFilt, volSpike, "MACD", color.red)
+
+// 使う/使わないを最終段で反映（= のみ）
+bullRSI = useRSI   ? bRSI  : false
+bearRSI = useRSI   ? sRSI  : false
+bullMACD= useMACDh ? bMACD : false
+bearMACD= useMACDh ? sMACD : false
+
+// 重複抑制（同バーでは一方優先）
+bullAny = (bullRSI and (na(bMACDbar) or bRSIbar <= bMACDbar)) or
+          (bullMACD and (na(bRSIbar) or bMACDbar <  bRSIbar))
+
+bearAny = (bearRSI and (na(sMACDbar) or sRSIbar <= sMACDbar)) or
+          (bearMACD and (na(sRSIbar) or sMACDbar <  sRSIbar))
+
+// ===== Plots =====
+plotshape(momUp,  title="Momentum Up (Init)",   style=shape.triangleup,   size=size.tiny, color=color.fuchsia, location=location.belowbar, text="MOM↑")
+plotshape(momDn,  title="Momentum Down (Init)", style=shape.triangledown, size=size.tiny, color=color.orange,  location=location.abovebar, text="MOM↓")
+
+plotshape(bullAny, title="Bullish Div (Filtered)", style=shape.circle,  size=size.tiny, color=color.aqua,  location=location.belowbar, text="DIV↑")
+plotshape(bearAny, title="Bearish Div (Filtered)", style=shape.diamond, size=size.tiny, color=color.red,   location=location.abovebar, text="DIV↓")
+
+// ===== Alerts（定数メッセージのみ） =====
+alertcondition(momUp,  title="Momentum Up (Init)",    message="MACD Hist 0上抜け + RSI基準超え + (出来高条件適用可)")
+alertcondition(momDn,  title="Momentum Down (Init)",  message="MACD Hist 0下抜け + RSI基準下回り + (出来高条件適用可)")
+alertcondition(bullAny, title="Bullish Divergence",   message="強気ダイバージェンス（ピボット&出来高フィルタ）")
+alertcondition(bearAny, title="Bearish Divergence",   message="弱気ダイバージェンス（ピボット&出来高フィルタ）")
+alertcondition(momUp and bullAny, title="MOM↑ + BullDiv", message="モメンタム上昇初動＋強気ダイバージェンス")
+alertcondition(momDn and bearAny, title="MOM↓ + BearDiv", message="モメンタム下降初動＋弱気ダイバージェンス")
