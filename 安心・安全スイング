@@ -1,0 +1,117 @@
+//@version=6
+strategy("安心・安全スイング（TP/SL自動・プリセット付） v1.1",
+     overlay=true, initial_capital=1000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     commission_type=strategy.commission.percent, commission_value=0.05)
+
+// ========= 基本設定 =========
+groupGen   = "基本設定"
+usePreset  = input.bool(true,  "銘柄プリセットを自動適用", group=groupGen)
+usePercent = input.bool(false, "TP/SLを％指定に切替（価格未指定の保険）", group=groupGen)
+tpPct      = input.float(9.0,  "利確％（％指定時）", step=0.1, group=groupGen)
+slPct      = input.float(4.5,  "損切％（％指定時）", step=0.1, group=groupGen)
+
+// ========= 価格手入力（プリセット上書き可｜0.0で未指定扱い） =========
+groupPx  = "価格指定（プリセット上書き可）"
+entryL_in = input.float(0.0, "エントリー帯・下限", group=groupPx)
+entryH_in = input.float(0.0, "エントリー帯・上限", group=groupPx)
+tp_in     = input.float(0.0, "利確（TP）価格",   group=groupPx)
+sl_in     = input.float(0.0, "損切（SL）価格",   group=groupPx)
+
+// ========= ユーティリティ =========
+match(symCode) =>
+    // 日本株は "TSE:9433" 等になることがあるため、ticker/tickeridの両方で包含判定
+    str.contains(syminfo.ticker, symCode) or str.contains(syminfo.tickerid, ":" + symCode)
+
+// ========= プリセット（銘柄 → 価格帯/TP/SL） =========
+var float pEntryL = na
+var float pEntryH = na
+var float pTP     = na
+var float pSL     = na
+
+if barstate.isfirst
+    // --- 通信・内需 ---
+    if match("9432")
+        pEntryL:=180,  pEntryH:=185,  pTP:=200,  pSL:=174
+    else if match("9433")
+        pEntryL:=4300, pEntryH:=4400, pTP:=4700, pSL:=4180
+    else if match("1951")
+        pEntryL:=1800, pEntryH:=1850, pTP:=2050, pSL:=1720
+    else if match("2914")
+        pEntryL:=4000, pEntryH:=4100, pTP:=4400, pSL:=3880
+    else if match("2503")
+        pEntryL:=2050, pEntryH:=2100, pTP:=2250, pSL:=1980
+    else if match("3382")
+        pEntryL:=7500, pEntryH:=7700, pTP:=8300, pSL:=7300
+    // --- 電力・ガス ---
+    else if match("9502")
+        pEntryL:=1900, pEntryH:=1950, pTP:=2150, pSL:=1820
+    else if match("9503")
+        pEntryL:=2500, pEntryH:=2550, pTP:=2800, pSL:=2420
+    else if match("9531")
+        pEntryL:=3200, pEntryH:=3300, pTP:=3550, pSL:=3100
+    // --- ETF ---
+    else if match("1306")
+        pEntryL:=2850, pEntryH:=2900, pTP:=3050, pSL:=2780
+    else if match("2569")
+        pEntryL:=11600,pEntryH:=11800,pTP:=12300,pSL:=11300
+    else if match("1476")
+        pEntryL:=2400, pEntryH:=2450, pTP:=2600, pSL:=2340
+
+// 入力で上書き（0.0は未指定としてプリセット活用）
+entryL = (not usePreset and entryL_in != 0.0) ? entryL_in : (entryL_in != 0.0 ? entryL_in : pEntryL)
+entryH = (not usePreset and entryH_in != 0.0) ? entryH_in : (entryH_in != 0.0 ? entryH_in : pEntryH)
+tpPx   = (not usePreset and tp_in     != 0.0) ? tp_in     : (tp_in     != 0.0 ? tp_in     : pTP)
+slPx   = (not usePreset and sl_in     != 0.0) ? sl_in     : (sl_in     != 0.0 ? sl_in     : pSL)
+
+// ％フォールバック（TP/SLがnaまたは0相当なら％で生成）
+avgRef = ta.vwma(close, 5)
+tpPx := (usePercent and (na(tpPx) or tpPx == 0.0)) ? avgRef * (1 + tpPct/100) : tpPx
+slPx := (usePercent and (na(slPx) or slPx == 0.0)) ? avgRef * (1 - slPct/100) : slPx
+
+// ========= エントリー判定（帯に入った瞬間に1回） =========
+isFlat     = strategy.position_size == 0
+haveZone   = not na(entryL) and not na(entryH)
+inZoneNow  = haveZone and close >= entryL and close <= entryH
+inZonePrev = haveZone and close[1] >= entryL and close[1] <= entryH
+crossInto  = isFlat and inZoneNow and not inZonePrev
+
+if crossInto
+    strategy.entry("L", strategy.long)
+
+// 退出（TP/SL一括）
+if strategy.position_size > 0 and not na(tpPx) and not na(slPx)
+    strategy.exit("L-TP/SL", "L", stop=slPx, limit=tpPx)
+
+// ========= 可視化 =========
+colZone = color.new(color.teal, 85)
+p1 = plot(entryL, "Entry下限", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=1)
+p2 = plot(entryH, "Entry上限", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=1)
+fill(p1, p2, color=colZone, title="Entry帯")
+
+plot(tpPx, "TP", color=color.new(color.lime, 0), linewidth=2)
+plot(slPx, "SL", color=color.new(color.red,  0), linewidth=2)
+
+den = math.max(math.abs(close - slPx), 1e-9)
+rr  = math.abs(tpPx - close) / den
+var label info = na
+if barstate.islast
+    label.delete(info)
+    info := label.new(bar_index, na,        "安心・安全スイング v1.1\n" +        "銘柄: " + syminfo.ticker + "\n" +        "Entry帯: " + str.tostring(entryL) + " - " + str.tostring(entryH) + "\n" +        "TP: " + str.tostring(tpPx) + " / SL: " + str.tostring(slPx) + "\n" +        "RR(概算): " + str.tostring(rr, "#.##"),        style=label.style_label_right, textcolor=color.white, color=color.new(color.black, 0))
+
+/// ===== トリガー条件（先に定義） =====
+tpNear = strategy.position_size > 0 and not na(tpPx) and (tpPx - close) <= (close * 0.005) and tpPx > close
+tpHit  = strategy.position_size > 0 and not na(tpPx) and high >= tpPx
+slNear = strategy.position_size > 0 and not na(slPx) and (close - slPx) <= (close * 0.005) and slPx < close
+slHit  = strategy.position_size > 0 and not na(slPx) and low  <= slPx
+
+// ===== アラート（messageは定数文字列のみ）=====
+alertcondition(crossInto, title="Entry帯へ突入", message="【{{ticker}}】がエントリー帯へ突入")
+alertcondition(tpNear,    title="TP接近",        message="【{{ticker}}】利確（TP）水準に接近")
+alertcondition(tpHit,     title="TPヒット",       message="【{{ticker}}】利確（TP）達成！")
+alertcondition(slNear,    title="SL接近",        message="【{{ticker}}】損切（SL）水準に接近")
+alertcondition(slHit,     title="SLヒット",       message="【{{ticker}}】損切（SL）到達")
+
+// ========= バリデーション =========
+warn = na(entryL) or na(entryH) or na(tpPx) or na(slPx)
+plotchar(warn, title="設定不足", char="⚠", location=location.top, color=color.orange, size=size.tiny)
