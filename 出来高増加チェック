@@ -1,0 +1,58 @@
+//@version=6
+indicator("出来高比率アラート（前日比／平均比・倍率設定可）", overlay=true, shorttitle="VolRatioA")
+
+// ===== 入力 =====
+groupA = "比較設定"
+mode   = input.string("前日比", "比較対象", options=["前日比", "平均比"], group=groupA)
+mult   = input.float(1.5, "倍率（例：1.5倍）", step=0.1, group=groupA)
+maLen  = input.int(20, "平均期間（平均比のとき有効）", minval=2, group=groupA)
+maType = input.string("SMA", "平均種類", options=["SMA","EMA","WMA","VWMA"], group=groupA)
+
+groupB = "可視化"
+showRatioPlot = input.bool(true, "下段に出来高比率を表示", group=groupB)
+showArrows    = input.bool(true, "アラート時に矢印を表示", group=groupB)
+
+groupC = "通知設定"
+closeOnly = input.bool(true, "確定足でのみ通知（推奨）", group=groupC)
+
+// ===== 計算 =====
+prevVol = volume[1]
+smaVol  = ta.sma(volume, maLen)
+emaVol  = ta.ema(volume, maLen)
+wmaVol  = ta.wma(volume, maLen)
+vwmaVol = ta.vwma(volume, maLen)
+
+maSel = switch maType
+    "SMA"  => smaVol
+    "EMA"  => emaVol
+    "WMA"  => wmaVol
+    "VWMA" => vwmaVol
+
+refVol = mode == "前日比" ? prevVol : maSel
+ratio  = refVol > 0 ? (volume / refVol) : na
+
+// ===== 条件 =====
+condRaw = ratio >= mult
+cond    = closeOnly ? (condRaw and barstate.isconfirmed) : condRaw
+
+// ===== 可視化（矢印はOK、plot/hlineはグローバルで制御） =====
+if showArrows and cond
+    label.new(bar_index, low, text="▲Vol×" + str.tostring(mult),
+        style=label.style_label_up, color=color.new(color.teal, 0),
+        textcolor=color.white, size=size.tiny)
+
+// plot/hline は if に入れない。表示切替は ?: と display で行う。
+plot(showRatioPlot ? ratio : na, title="出来高比率", linewidth=2, color=color.new(color.blue, 0))
+hline(mult,  "閾値ライン", color=color.new(color.red, 0),  display= showRatioPlot ? display.all : display.none)
+hline(1.0,   "等倍",       color=color.new(color.gray,60), display= showRatioPlot ? display.all : display.none)
+
+// ===== アラート（message は const 文字列のみ） =====
+alertcondition(cond, title="出来高比率アラート",
+     message="出来高が設定倍率を超過（詳細はインジ設定参照）")
+
+// ===== 右上ラベル（最終確定足で更新） =====
+if barstate.islastconfirmedhistory
+    txt = "比較: " + mode + "\n倍率: ×" + str.tostring(mult) +
+          (mode == "平均比" ? "\n平均: " + maType + "(" + str.tostring(maLen) + ")" : "")
+    label.new(bar_index, high, txt, xloc=xloc.bar_index, yloc=yloc.price,
+        style=label.style_label_right, color=color.new(color.black, 0), textcolor=color.white)
