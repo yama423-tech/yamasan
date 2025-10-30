@@ -1,0 +1,59 @@
+//@version=6
+indicator("6594 ニデック VWAP監視＋出来高倍率アラート", overlay=true, shorttitle="VWAPVolR")
+
+// ====== パラメータ ======
+groupGen = "一般設定"
+showBG   = input.bool(true,  "VWAP割れ×高出来高で背景点灯", group=groupGen)
+showLast = input.bool(true,  "右端に情報ラベルを表示", group=groupGen)
+
+groupVol = "出来高関連"
+volLen   = input.int(20, "出来高移動平均（本数）", minval=5, group=groupVol)
+vrThr    = input.float(1.5, "出来高倍率しきい値（×）", step=0.1, group=groupVol)
+
+groupAlert = "アラート設定"
+useAlertVwapDown   = input.bool(true,  "VWAP割れ", group=groupAlert)
+useAlertVwapUp     = input.bool(true,  "VWAP回復（上抜け）", group=groupAlert)
+useAlertVolHigh    = input.bool(true,  "出来高倍率がしきい値以上", group=groupAlert)
+useAlertCombo      = input.bool(true,  "VWAP割れ × 出来高倍率以上（複合）", group=groupAlert)
+
+// ====== 計算 ======
+src  = hlc3
+vwap = ta.vwap(src)
+
+volMA    = ta.sma(volume, volLen)
+volRatio = volMA > 0 ? (volume / volMA) : na
+vrDisp   = math.round(volRatio * 100.0) / 100.0
+
+vdevPct  = na(vwap) ? na : (close / vwap - 1.0) * 100.0
+vdevDisp = math.round(vdevPct * 10.0) / 10.0
+
+// ====== 描画 ======
+plot(vwap, title="VWAP", color=color.new(color.teal, 0), linewidth=2)
+hline(1.0, "出来高倍率=1.0（平均）", linestyle=hline.style_dotted, color=color.new(color.gray, 60))
+
+bgcolor(showBG and close < vwap and volRatio >= vrThr ? color.new(color.red, 85) : na)
+
+plotshape(ta.crossunder(close, vwap), title="VWAP割れ", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, text="VWAP↓")
+plotshape(ta.crossover(close, vwap),  title="VWAP回復", style=shape.triangleup,   location=location.belowbar, color=color.teal, size=size.tiny, text="VWAP↑")
+
+// ====== ラベル ======
+if showLast and barstate.islast and not na(vwap)
+    var label lastLbl = na
+    if not na(lastLbl)
+        label.delete(lastLbl)
+    col = close >= vwap ? color.new(color.teal, 0) : color.new(color.red, 0)
+    txt = "VWAP: " + str.tostring(vwap, format.mintick) +
+          "\n出来高倍率: ×" + str.tostring(vrDisp, format.mintick) +
+          "\nVWAP乖離: " + (vdevDisp >= 0 ? "+" : "") + str.tostring(vdevDisp, format.mintick) + "%"
+    lastLbl := label.new(bar_index, close, txt, yloc=yloc.price, style=label.style_label_right, color=color.new(col, 10), textcolor=color.black)
+
+// ====== アラート条件 ======
+condVwapDown = ta.crossunder(close, vwap)
+condVwapUp   = ta.crossover(close, vwap)
+condVolHigh  = volRatio >= vrThr
+condCombo    = condVwapDown and condVolHigh
+
+alertcondition(useAlertVwapDown and condVwapDown, title="VWAP割れ", message="VWAP割れ検出")
+alertcondition(useAlertVwapUp   and condVwapUp,   title="VWAP回復", message="VWAP回復（上抜け）")
+alertcondition(useAlertVolHigh  and condVolHigh,  title="出来高倍率上昇", message="出来高倍率がしきい値を超過")
+alertcondition(useAlertCombo    and condCombo,    title="複合：VWAP割れ×高出来高", message="VWAP割れ×高出来高 同時発生（要注意）")
