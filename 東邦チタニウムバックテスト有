@@ -1,0 +1,137 @@
+//@version=6
+strategy(title="5727Sync FULL r17（freq+TP調整／BT可・Y軸連動）", shorttitle="5727Sync",
+     overlay=true, initial_capital=1000000, currency=currency.JPY,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=false)
+
+//==================== 基本パラメータ ====================
+groupCore  = "コア設定"
+emaFastLen = input.int(12,  "EMA Fast", minval=2, group=groupCore)
+emaSlowLen = input.int(26,  "EMA Slow", minval=2, group=groupCore)
+atrLen     = input.int(14,  "ATR期間",   minval=2, group=groupCore)
+rsiLen     = input.int(14,  "RSI期間",   minval=2, group=groupCore)
+rsiMin     = input.int(45,  "RSI下限（基準）", minval=0, maxval=100, group=groupCore)
+tp1Mult    = input.float(1.2, "TP1 ATR倍率", step=0.1, group=groupCore)
+tp2Mult    = input.float(2.0, "TP2 ATR倍率", step=0.1, group=groupCore)
+slMult     = input.float(1.2, "SL ATR倍率",  step=0.1, group=groupCore)
+
+//==================== 頻度／利確 調整 ====================
+groupTune    = "頻度/利確の調整"
+cooldownBars = input.int(20, "クールダウン（最低バー間隔）", minval=0, group=groupTune)
+rsiBoost     = input.float(0.0, "RSI下限 上乗せ（+）", minval=0, maxval=10, step=0.5, group=groupTune)
+emaGapAtr    = input.float(0.0, "価格がEMA Fastより上（ATR倍）", minval=0.0, step=0.1, group=groupTune)
+needRising   = input.bool(true, "RSI上昇必須（rsi > rsi[1]）", group=groupTune)
+tp1Adj       = input.float(1.0, "TP1倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+tp2Adj       = input.float(1.0, "TP2倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+useTP1       = input.bool(true, "TP1を使う（部分利確ON）", group=groupTune)
+partPct      = input.int(50, "TP1利確比率（%）", minval=0, maxval=100, group=groupTune)
+
+//==================== 可視化 ====================
+groupVis   = "可視化設定"
+showMAs    = input.bool(true,  "EMAを表示",          group=groupVis)
+showStops  = input.bool(true,  "動的SLを表示",        group=groupVis)
+showTxt    = input.bool(true,  "BUY/TP/SLマーカー表示", group=groupVis)
+showLines  = input.bool(true,  "TP1/TP2/SLライン（Y軸連動）", group=groupVis)
+
+//==================== 計算 ====================
+price   = close
+emaFast = ta.ema(price, emaFastLen)
+emaSlow = ta.ema(price, emaSlowLen)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(price, rsiLen)
+
+//==================== シグナル条件 ====================
+trendUp = price > emaFast and emaFast > emaFast[1]
+rsiTh   = rsiMin + rsiBoost
+rsiOk   = rsi >= rsiTh and (not needRising or rsi > rsi[1])
+gapOk   = emaGapAtr == 0.0 or price >= emaFast + atr * emaGapAtr
+biasOk  = emaFast >= emaSlow
+fireBuyRaw = trendUp and rsiOk and biasOk and gapOk
+
+//==================== クールダウン制御 ====================
+var int lastSigBar = na
+canSignal = na(lastSigBar) or (bar_index - lastSigBar > cooldownBars)
+fireBuy   = fireBuyRaw and canSignal
+
+//==================== 状態管理 ====================
+inPos = strategy.position_size > 0
+var float entryPx = na
+var float dynStop = na
+
+//==================== エントリ ====================
+if fireBuy and not inPos
+    strategy.entry("BUY", strategy.long)
+    entryPx    := price
+    dynStop    := entryPx - atr * slMult
+    lastSigBar := bar_index
+
+//==================== TP/SL 計算 ====================
+tp1 = inPos ? entryPx + atr * tp1Mult * tp1Adj : na
+tp2 = inPos ? entryPx + atr * tp2Mult * tp2Adj : na
+
+tp1HitNow = inPos and useTP1 and partPct > 0 and (price >= tp1 or ta.cross(price, tp1))
+
+//==================== エグジット（利確／損切） ====================
+if inPos
+    if useTP1 and partPct > 0
+        strategy.exit("TP1", from_entry="BUY", limit=tp1, stop=dynStop, qty_percent=partPct)
+        strategy.exit("TP2", from_entry="BUY", limit=tp2, stop=dynStop, qty_percent=100 - partPct)
+    else
+        strategy.exit("TP2", from_entry="BUY", limit=tp2, stop=dynStop, qty_percent=100)
+
+// TP1 命中で建値ストップへ引き上げ
+if tp1HitNow
+    dynStop := math.max(dynStop, entryPx)
+
+//==================== 可視化（プロット／シェイプ） ====================
+plot(showMAs ? emaFast : na, "EMA Fast",  color=color.new(color.teal,   0), linewidth=2)
+plot(showMAs ? emaSlow : na, "EMA Slow",  color=color.new(color.orange, 0), linewidth=2)
+plot(showStops and inPos ? dynStop : na, "Dyn SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+
+plotshape(showTxt and fireBuy and not inPos, title="BUY", style=shape.triangleup,
+          color=color.new(color.lime, 0), location=location.belowbar, size=size.large, text="BUY")
+
+//==================== Y軸連動ライン（TP1/TP2/SL） ====================
+var line lnTP1 = na
+var line lnTP2 = na
+var line lnSL  = na
+
+// ラインの作成・更新
+if showLines and inPos
+    // TP1
+    if useTP1 and partPct > 0
+        if na(lnTP1)
+            lnTP1 := line.new(bar_index-1, tp1, bar_index, tp1, extend=extend.right, color=color.new(color.green, 70), width=2)
+        else
+            line.set_xy1(lnTP1, bar_index-1, tp1)
+            line.set_xy2(lnTP1, bar_index,   tp1)
+    else
+        if not na(lnTP1)
+            line.delete(lnTP1)
+            lnTP1 := na
+
+    // TP2
+    if na(lnTP2)
+        lnTP2 := line.new(bar_index-1, tp2, bar_index, tp2, extend=extend.right, color=color.new(color.blue, 70), width=2)
+    else
+        line.set_xy1(lnTP2, bar_index-1, tp2)
+        line.set_xy2(lnTP2, bar_index,   tp2)
+
+    // SL
+    if na(lnSL)
+        lnSL := line.new(bar_index-1, dynStop, bar_index, dynStop, extend=extend.right, color=color.new(color.red, 60), width=2, style=line.style_dotted)
+    else
+        line.set_xy1(lnSL, bar_index-1, dynStop)
+        line.set_xy2(lnSL, bar_index,   dynStop)
+
+// ノーポジまたはライン非表示時はクリーンアップ
+if (not inPos) or (not showLines)
+    if not na(lnTP1)
+        line.delete(lnTP1)
+        lnTP1 := na
+    if not na(lnTP2)
+        line.delete(lnTP2)
+        lnTP2 := na
+    if not na(lnSL)
+        line.delete(lnSL)
+        lnSL := na
