@@ -1,0 +1,108 @@
+//@version=6
+strategy(title = "5727Sync FULL r18 (MTF対応/TP調整/BT可)",
+     shorttitle = "5727Sync",
+     overlay = true,
+     initial_capital = 1000000,
+     currency = currency.JPY,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.05,      // 片道0.05%
+     pyramiding = 0,
+     calc_on_every_tick = false,
+     process_orders_on_close = false)
+
+// ========= 基本パラメータ =========
+groupCore  = "コア設定"
+emaFastLen = input.int(12, "EMA Fast", minval=2, group=groupCore)
+emaSlowLen = input.int(26, "EMA Slow", minval=2, group=groupCore)
+atrLen     = input.int(14, "ATR期間", minval=2, group=groupCore)
+rsiLen     = input.int(14, "RSI期間", minval=2, group=groupCore)
+rsiMin     = input.int(45, "RSI下限（基準）", minval=0, maxval=100, group=groupCore)
+tp1Mult    = input.float(1.2, "TP1 ATR倍率", step=0.1, group=groupCore)
+tp2Mult    = input.float(2.0, "TP2 ATR倍率", step=0.1, group=groupCore)
+slMult     = input.float(1.2, "SL ATR倍率", step=0.1, group=groupCore)
+
+// ========= 頻度/利確 調整 =========
+groupTune    = "頻度/利確の調整"
+cooldownSig  = input.int(20, "クールダウン（最低バー間隔）", minval=0, group=groupTune)
+rsiBoost     = input.float(0.0, "RSI下限 上乗せ（+）", minval=0, maxval=10, step=0.5, group=groupTune)
+emaGapAtr    = input.float(0.0, "価格がEMA Fastより上（ATR倍）", minval=0.0, step=0.1, group=groupTune)
+needRising   = input.bool(true, "RSI上昇必須（rsi > rsi[1]）", group=groupTune)
+tp1Adj       = input.float(1.0, "TP1倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+tp2Adj       = input.float(1.0, "TP2倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+useTP1       = input.bool(true, "TP1を使う（部分利確ON）", group=groupTune)
+partPct      = input.int(50, "TP1利確比率（%）", minval=0, maxval=100, group=groupTune)
+
+// ========= 可視化 =========
+groupVis  = "可視化設定"
+showMAs   = input.bool(true,  "EMAを表示", group=groupVis)
+showStops = input.bool(true,  "動的SLを表示", group=groupVis)
+showTxt   = input.bool(true,  "BUY/TP/SLマーカー表示", group=groupVis)
+
+// ========= 計算 =========
+price   = close
+emaFast = ta.ema(price, emaFastLen)
+emaSlow = ta.ema(price, emaSlowLen)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(price, rsiLen)
+
+// ========= シグナル条件 =========
+trendUp = price > emaFast and emaFast > emaFast[1]
+rsiTh   = rsiMin + rsiBoost
+rsiOk   = rsi >= rsiTh and (not needRising or rsi > rsi[1])
+gapOk   = emaGapAtr == 0.0 or price >= emaFast + atr * emaGapAtr
+biasOk  = emaFast >= emaSlow
+fireBuyRaw = trendUp and rsiOk and biasOk and gapOk
+
+// ========= クールダウン（バー間隔） =========
+var int sigCounter = 0
+var int lastSigBar = na
+var bool isNewSigBar = false
+
+isNewSigBar := (bar_index - nz(lastSigBar, 0)) > cooldownSig
+
+if isNewSigBar
+    sigCounter += 1
+
+var int lastSigCount = na
+canSignal = na(lastSigCount) or (sigCounter - lastSigCount > cooldownSig)
+fireBuy = fireBuyRaw and isNewSigBar and canSignal
+
+// ========= 状態管理 =========
+inPos   = strategy.position_size > 0
+var float entryPx = na
+var float dynStop = na
+
+// ========= エントリ =========
+if fireBuy and not inPos
+    strategy.entry("BUY", strategy.long)
+    entryPx    := price
+    dynStop    := entryPx - atr * slMult
+    lastSigBar := bar_index
+
+// ========= TP/SL 計算 =========
+tp1 = entryPx + atr * tp1Mult * tp1Adj
+tp2 = entryPx + atr * tp2Mult * tp2Adj
+tp1HitNow = inPos and (close >= tp1 or ta.cross(close, tp1))
+
+// ========= エグジット（利確/損切） =========
+if inPos
+    if useTP1 and partPct > 0
+        strategy.exit("TP1", from_entry="BUY", limit=tp1, stop=dynStop, qty_percent=partPct)
+        strategy.exit("TP2", from_entry="BUY", limit=tp2, stop=dynStop, qty_percent=100 - partPct)
+    else
+        strategy.exit("TP2", from_entry="BUY", limit=tp2, stop=dynStop, qty_percent=100)
+
+// ========= TP1命中で建値ストップへ引き上げ =========
+if tp1HitNow
+    dynStop := math.max(dynStop, entryPx)
+
+// ========= 可視化 =========
+plot(showMAs ? emaFast : na, "EMA Fast", color=color.new(color.teal, 0), linewidth=2)
+plot(showMAs ? emaSlow : na, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+plot(showStops and inPos ? dynStop : na, "Dyn SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+plotshape(showTxt and fireBuy and not inPos, title="BUY", style=shape.triangleup,
+          color=color.new(color.lime, 0), location=location.belowbar, size=size.large, text="BUY")
+
+plot(showTxt and inPos and useTP1 and partPct > 0 ? tp1 : na, "TP1", color=color.new(color.green, 0), style=plot.style_cross, linewidth=2)
+plot(showTxt and inPos ? tp2 : na, "TP2", color=color.new(color.blue, 0), style=plot.style_cross, linewidth=2)
+plot(showTxt and inPos ? dynStop : na, "SL", color=color.new(color.red, 0), style=plot.style_cross, linewidth=2)
