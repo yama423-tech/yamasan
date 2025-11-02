@@ -1,0 +1,709 @@
+//@version=6
+strategy("PatternScout Ultra v6｜完全複合（形状+ハーモニック+RSI/ADX/ATR/VWAP/OBV+BT）",
+     overlay=true, max_lines_count=500, max_labels_count=500,
+     initial_capital=1000000, commission_type=strategy.commission.percent, commission_value=0.05)
+
+//========================= 入力 =========================
+grpTF = "MTF（検出用の足）"
+useMTF   = input.bool(false, "別タイムフレームで形状検出する", group=grpTF)
+tfDetect = input.timeframe("", "検出TF（例: 15, 60, 240, D, W）", group=grpTF)
+
+grpSwing = "スイング（感度）"
+lb        = input.int(5, "pivot左右本数（確定）", minval=2, group=grpSwing)
+maxSwings = input.int(60, "保持スイング数（最大）", minval=20, maxval=400, group=grpSwing)
+
+grpTol = "形状許容・閾値（％/本数）"
+tolSame    = input.float(0.8, "同値判定（肩/天井/底）", step=0.1, group=grpTol)
+tolSlope   = input.float(1.2, "傾き近似（△/楔/旗/拡大型）", step=0.1, group=grpTol)
+maxBaseLen = input.int(90, "保ち合い/旗/三角の最大長（本）", minval=10, maxval=600, group=grpTol)
+harmTol    = input.float(5.0, "ハーモニック比率許容（±％）", step=0.5, group=grpTol)
+
+grpUse = "検出対象（ON/OFF）"
+useDTDB   = input.bool(true,  "ダブルトップ/ボトム", group=grpUse)
+useHS     = input.bool(true,  "H&S / 逆H&S", group=grpUse)
+useTri    = input.bool(true,  "三角保ち合い", group=grpUse)
+useFlag   = input.bool(true,  "フラッグ/ペナント", group=grpUse)
+useWedge  = input.bool(true,  "ウェッジ（上昇/下降）", group=grpUse)
+useCwH    = input.bool(true,  "カップ・ウィズ・ハンドル", group=grpUse)
+useTriple = input.bool(true,  "トリプルトップ/ボトム", group=grpUse)
+useRange  = input.bool(true,  "レンジ（矩形）ブレイク", group=grpUse)
+useCh     = input.bool(true,  "平行チャネル（回帰）ブレイク", group=grpUse)
+useBroad  = input.bool(true,  "ブロードニング（メガホン）", group=grpUse)
+useHarm   = input.bool(true,  "ハーモニック（Gartley/Butterfly/Bat/Crab）", group=grpUse)
+useDiamond= input.bool(true,  "ダイヤモンド", group=grpUse)
+useRound  = input.bool(true,  "ラウンディングボトム（簡易）", group=grpUse)
+
+grpVol = "出来高フィルタ（ブレイク確認）"
+useVol  = input.bool(true, "出来高でブレイク確認する", group=grpVol)
+volLen  = input.int(20, "出来高SMA期間", minval=2, group=grpVol)
+volMult = input.float(1.5, "ブレイク時：出来高×倍数以上", step=0.1, group=grpVol)
+
+grpInd = "モメンタム統合（色分け/評価）"
+rsiLen   = input.int(14, "RSI期間", group=grpInd)
+adxLen   = input.int(14, "ADX期間", group=grpInd)
+atrLen   = input.int(14, "ATR期間（TP/SL）", group=grpInd)
+obvLenHH = input.int(80, "OBV比較長（高値/安値更新判定）", group=grpInd)
+scoreForStrong = input.int(3, "強勢判定に必要スコア（0-5）", minval=0, maxval=5, group=grpInd)
+scoreForWeak   = input.int(3, "弱勢判定に必要スコア（0-5）", minval=0, maxval=5, group=grpInd)
+
+grpBack = "バックテスト（strategy）"
+useEntry      = input.bool(true,  "自動エントリーON", group=grpBack)
+riskATRmultSL = input.float(1.2,  "損切：ATR×", step=0.1, group=grpBack)
+riskATRmultTP = input.float(2.4,  "利確：ATR×", step=0.1, group=grpBack)
+
+grpDraw = "描画"
+showLines  = input.bool(true,  "ガイド線/帯を描画", group=grpDraw)
+showLabels = input.bool(true,  "ラベルを表示", group=grpDraw)
+showPanel  = input.bool(true,  "右上パネル", group=grpDraw)
+shadeBack  = input.bool(true,  "背景色で強弱表示", group=grpDraw)
+
+// strategy設定（v6で存在するAPIのみ）
+strategy.risk.allow_entry_in(strategy.direction.long)
+
+//================= 価格・出来高（MTF・非リペイント） ===============
+var string tfUse = useMTF and str.length(tfDetect) > 0 ? tfDetect : timeframe.period
+H = request.security(syminfo.tickerid, tfUse, high,  barmerge.gaps_off, barmerge.lookahead_off)
+L = request.security(syminfo.tickerid, tfUse, low,   barmerge.gaps_off, barmerge.lookahead_off)
+C = request.security(syminfo.tickerid, tfUse, close, barmerge.gaps_off, barmerge.lookahead_off)
+V = request.security(syminfo.tickerid, tfUse, volume,barmerge.gaps_off, barmerge.lookahead_off)
+
+vSma = ta.sma(V, volLen)
+volOK() => not useVol or (V > volMult * vSma)
+
+//====================== ユーティリティ ======================
+pctDiff(a,b) => math.abs(a-b)/((a+b)/2.0)*100.0
+slope(x1,y1,x2,y2) => (y2-y1)/(x2-x1)
+y_on(a,x,x0,y0) => a*(x-x0)+y0
+
+drawLine(x1,y1,x2,y2,ext,w,col) =>
+    if showLines
+        ln = line.new(x1,y1,x2,y2, extend=ext)
+        line.set_width(ln,w), line.set_color(ln,col)
+
+mkLbl(ix,py,txt) =>
+    if showLabels
+        label.new(ix,py,txt,style=label.style_label_up,textcolor=color.white,color=color.new(color.black,0))
+
+//--- DMI/ADX（自前実装）
+calc_dmi(_h, _l, _c, _len) =>
+    up = _h - _h[1]
+    dn = _l[1] - _l
+    plusDM  = na(up) or up <= 0 or up <= dn ? 0.0 : up
+    minusDM = na(dn) or dn <= 0 or dn <= up ? 0.0 : dn
+    tr1 = math.max(_h - _l, math.max(math.abs(_h - _c[1]), math.abs(_l - _c[1])))
+    tr  = ta.rma(tr1, _len)
+    plusDI  = 100.0 * ta.rma(plusDM,  _len) / tr
+    minusDI = 100.0 * ta.rma(minusDM, _len) / tr
+    dx  = 100.0 * math.abs(plusDI - minusDI) / math.max(plusDI + minusDI, 1e-10)
+    adx = ta.rma(dx, _len)
+    [plusDI, minusDI, adx]
+
+//================= pivot とスイング配列 =================
+ph = ta.pivothigh(H, lb, lb)
+pl = ta.pivotlow(L,  lb, lb)
+
+var sP = array.new_float() // 価格
+var sI = array.new_int()   // bar_index
+var sT = array.new_int()   // 1=高値, -1=安値
+
+// ここだけ差し替え
+pushSwing(_p, _i, _t) =>
+    if array.size(sT) > 0 and array.get(sT, array.size(sT) - 1) == _t
+        array.set(sP, array.size(sP) - 1, _p)
+        array.set(sI, array.size(sI) - 1, _i)
+        0   // ← 両ブロックの最後を同じ型（数値）にそろえる
+    else
+        array.push(sP, _p)
+        array.push(sI, _i)
+        array.push(sT, _t)
+        if array.size(sP) > maxSwings
+            array.shift(sP)
+            array.shift(sI)
+            array.shift(sT)
+        0   // ← こっちも数値でそろえる
+
+if not na(ph)
+    pushSwing(ph, bar_index - lb, 1)
+if not na(pl)
+    pushSwing(pl, bar_index - lb, -1)
+
+//------- getLast（配列の後に定義） -------
+getLast(_sign,_from) =>
+    bool found = false
+    int  idx   = -1
+    float val  = na
+    for j = _from to 0
+        if array.get(sT, j) == _sign
+            found := true
+            idx   := array.get(sI, j)
+            val   := array.get(sP, j)
+            break
+    [found, idx, val]
+
+// 背景色（関数内では返すだけ）
+shadeColor(_bull,_bear,_score)=>
+    _bull ? color.new(color.green, 85 - _score*10) :    _bear ? color.new(color.red,   85 - _score*10) : na
+
+//================= インジ（RSI/ADX/ATR/VWAP/OBV） ==============
+rsi = ta.rsi(C, rsiLen)
+[diPlus, diMinus, adx] = calc_dmi(H, L, C, adxLen)
+atr  = ta.atr(atrLen)
+vwap = ta.vwap
+
+// OBV（自前）
+var float obv = 0.0
+obv := nz(obv[1]) + (C > C[1] ? V : C < C[1] ? -V : 0.0)
+obvHH = ta.highest(obv, obvLenHH)
+obvLL = ta.lowest(obv,  obvLenHH)
+obvUp = obv > obvHH[1]
+obvDn = obv < obvLL[1]
+
+bullScore = (rsi>50?1:0) + ((adx>20 and diPlus>diMinus)?1:0) + (C>vwap?1:0) + (obvUp?1:0)
+bearScore = (rsi<50?1:0) + ((adx>20 and diMinus>diPlus)?1:0) + (C<vwap?1:0) + (obvDn?1:0)
+
+//================= 検出結果の保持とパネル =================
+var string lastPattern = ""
+var string lastSide    = ""
+var int    lastBar     = na
+var float  lastTP      = na
+var float  lastSL      = na
+var string lastTag     = ""
+var float  lastScore   = na
+
+var table tb = table.new(position.top_right, 1, 5, border_width=1)
+showPanelInfo() =>
+    if showPanel
+        table.cell(tb,0,0,"TF: "+tfUse, text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+        table.cell(tb,0,1,"形状: "+(str.length(lastPattern)>0?lastPattern:"—"), text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+        table.cell(tb,0,2,"方向: "+(str.length(lastSide)>0?lastSide:"—")+" / "+lastTag+" (Score="+str.tostring(lastScore)+")", text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+        table.cell(tb,0,3,"VWAP: "+str.tostring(vwap, format.mintick)+" / ADX: "+str.tostring(adx, format.mintick), text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+        table.cell(tb,0,4,"TP: "+(na(lastTP)?"—":str.tostring(lastTP, format.mintick))+" / SL: "+(na(lastSL)?"—":str.tostring(lastSL, format.mintick)), text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+
+//================= パターン検出関数 =================
+
+// 1) ダブルトップ/ボトム
+f_DTDB() =>
+    ok=false, bull=false, bear=false
+    float neck = na
+    int ix = -1
+    if array.size(sT) >= 3
+        i2 = array.size(sT)-1, i1 = i2-1, i0 = i2-2
+        t0 = array.get(sT,i0), t1 = array.get(sT,i1), t2 = array.get(sT,i2)
+        p0 = array.get(sP,i0), p1 = array.get(sP,i1), p2 = array.get(sP,i2)
+        ix := array.get(sI,i1)
+        isDT = t0==1 and t1==-1 and t2==1 and pctDiff(p0,p2)<=tolSame
+        isDB = t0==-1 and t1==1 and t2==-1 and pctDiff(p0,p2)<=tolSame
+        neck := t1==-1 ? p1 : na
+        if showLines and not na(neck)
+            drawLine(ix,neck, bar_index, neck, extend.right, 2, color.new(color.gray,0))
+        bear := isDT and C<neck and volOK()
+        bull := isDB and C>neck and volOK()
+        ok := bull or bear
+    [ok,bull,bear,neck]
+
+// 2) H&S / 逆H&S
+f_HS() =>
+    ok=false, bull=false, bear=false
+    if array.size(sT)>=5
+        i4=array.size(sT)-1, i3=i4-1, i2=i4-2, i1=i4-3, i0=i4-4
+        t0=array.get(sT,i0), p0=array.get(sP,i0), ix1=array.get(sI,i1)
+        t1=array.get(sT,i1), p1=array.get(sP,i1)
+        t2=array.get(sT,i2), p2=array.get(sP,i2)
+        t3=array.get(sT,i3), p3=array.get(sP,i3), ix3=array.get(sI,i3)
+        t4=array.get(sT,i4), p4=array.get(sP,i4)
+        topSeq = t0==1 and t1==-1 and t2==1 and t3==-1 and t4==1
+        invSeq = t0==-1 and t1==1 and t2==-1 and t3==1 and t4==-1
+        shouldersOK = pctDiff(p0,p4)<=tolSame
+        headTop = p2>math.max(p0,p4)
+        headInv = p2<math.min(p0,p4)
+        a = slope(ix1,p1,ix3,p3)
+        neck = y_on(a, bar_index, ix1, p1)
+        if showLines
+            drawLine(ix1,p1,ix3,p3, extend.right, 2, color.new(color.orange,0))
+        bear := topSeq and shouldersOK and headTop and C<neck and volOK()
+        bull := invSeq and shouldersOK and headInv and C>neck and volOK()
+        ok := bull or bear
+    [ok,bull,bear]
+
+// 3) 三角
+f_TRI() =>
+    ok=false, bull=false, bear=false
+    if array.size(sT)>=6
+        [aH, hx1, hp1] = getLast( 1, array.size(sT)-1)
+        [bH, hx2, hp2] = getLast( 1, array.size(sT)-2)
+        [aL, lx1, lp1] = getLast(-1, array.size(sT)-1)
+        [bL, lx2, lp2] = getLast(-1, array.size(sT)-2)
+        if aH and bH and aL and bL and (bar_index - math.min(hx2,lx2) <= maxBaseLen)
+            sH=slope(hx2,hp2,hx1,hp1)
+            sL=slope(lx2,lp2,lx1,lp1)
+            yH=y_on(sH, bar_index, hx1, hp1)
+            yL=y_on(sL, bar_index, lx1, lp1)
+            drawLine(hx2,hp2, bar_index, yH, extend.right, 2, color.new(color.teal,0))
+            drawLine(lx2,lp2, bar_index, yL, extend.right, 2, color.new(color.teal,0))
+            bull := C>yH and volOK()
+            bear := C<yL and volOK()
+            ok := bull or bear
+    [ok,bull,bear]
+
+// 4) フラッグ/ペナント
+impLen = input.int(14, "旗/ペナント：衝撃波探索本数", group="詳細：旗/ペナント")
+impPct = input.float(3.5,"衝撃波の最低％", group="詳細：旗/ペナント")
+f_FLAG() =>
+    ok=false, bull=false, bear=false
+    hh=ta.highest(C, impLen), ll=ta.lowest(C, impLen)
+    upPct=((hh-ll)/ll)*100.0
+    dirUp = C>ta.sma(C,impLen) and upPct>=impPct
+    dirDn = C<ta.sma(C,impLen) and upPct>=impPct
+    if array.size(sT)>=6
+        [aH, hx1, hp1] = getLast( 1, array.size(sT)-1)
+        [bH, hx2, hp2] = getLast( 1, array.size(sT)-2)
+        [aL, lx1, lp1] = getLast(-1, array.size(sT)-1)
+        [bL, lx2, lp2] = getLast(-1, array.size(sT)-2)
+        if aH and bH and aL and bL and (bar_index - math.min(hx2,lx2) <= maxBaseLen)
+            sH=slope(hx2,hp2,hx1,hp1)
+            sL=slope(lx2,lp2,lx1,lp1)
+            parallel = pctDiff(math.abs(sH), math.abs(sL)) <= tolSlope
+            yH=y_on(sH, bar_index, hx1, hp1)
+            yL=y_on(sL, bar_index, lx1, lp1)
+            drawLine(hx2,hp2, bar_index, yH, extend.right, 2, color.new(color.aqua,0))
+            drawLine(lx2,lp2, bar_index, yL, extend.right, 2, color.new(color.aqua,0))
+            bull := parallel and dirUp  and C>yH and volOK()
+            bear := parallel and dirDn  and C<yL and volOK()
+            ok := bull or bear
+    [ok,bull,bear]
+
+// 5) ウェッジ
+f_WEDGE() =>
+    ok=false, bull=false, bear=false
+    if array.size(sT)>=6
+        [aH, hx1, hp1] = getLast( 1, array.size(sT)-1)
+        [bH, hx2, hp2] = getLast( 1, array.size(sT)-2)
+        [aL, lx1, lp1] = getLast(-1, array.size(sT)-1)
+        [bL, lx2, lp2] = getLast(-1, array.size(sT)-2)
+        sH=slope(hx2,hp2,hx1,hp1)
+        sL=slope(lx2,lp2,lx1,lp1)
+        rising  = sH>0 and sL>0 and pctDiff(math.abs(sH),math.abs(sL))<=tolSlope
+        falling = sH<0 and sL<0 and pctDiff(math.abs(sH),math.abs(sL))<=tolSlope
+        yH=y_on(sH, bar_index, hx1, hp1)
+        yL=y_on(sL, bar_index, lx1, lp1)
+        drawLine(hx2,hp2, bar_index, yH, extend.right, 2, color.new(color.fuchsia,0))
+        drawLine(lx2,lp2, bar_index, yL, extend.right, 2, color.new(color.fuchsia,0))
+        bear := rising  and C<yL and volOK()
+        bull := falling and C>yH and volOK()
+        ok := bull or bear
+    [ok,bull,bear]
+
+// 6) CwH（0長対策込み）
+f_CWH() =>
+    ok = false
+    bull = false
+
+    // 初期バーで0にならないよう +1、上限240
+    len = math.min(bar_index + 1, 240)
+
+    // ここで必ず長さ>=1
+    leftH = ta.highest(H, len)
+    leftIdx = ta.barssince(H == leftH)
+
+    // 右肩（右カップ縁）候補：左高値 ±tolSame% の帯に入った最後の箇所
+    condRight = H >= leftH * (1 - tolSame/100) and H <= leftH * (1 + tolSame/100)
+    rightBars = ta.barssince(condRight)
+
+    // barssince は該当なしで大きな数になることがあるのでガード
+    rightOK = rightBars >= 0 and rightBars < leftIdx
+    rightHigh = rightOK ? H[rightBars] : na
+
+    // ハンドルの深さ判定用の最安値（期間も最低1）
+    hdlLen = math.max(1, math.min(25, len))
+    hdl = ta.lowest(L, hdlLen)
+
+    hdlOk = rightOK and not na(rightHigh) and ((rightHigh - hdl) / rightHigh * 100.0 <= 15)
+
+    bull := rightOK and hdlOk and C > rightHigh and volOK()
+    ok := bull
+    [ok, bull]
+
+// 7) トリプル
+f_TRIPLE() =>
+    ok=false, bull=false, bear=false
+    if array.size(sT)>=5
+        i4=array.size(sT)-1, i3=i4-1, i2=i4-2, i1=i4-3, i0=i4-4
+        t0=array.get(sT,i0), p0=array.get(sP,i0)
+        t1=array.get(sT,i1), p1=array.get(sP,i1)
+        t2=array.get(sT,i2), p2=array.get(sP,i2)
+        t3=array.get(sT,i3), p3=array.get(sP,i3)
+        t4=array.get(sT,i4), p4=array.get(sP,i4)
+        isTT = t0==1 and t1==-1 and t2==1 and t3==-1 and t4==1 and pctDiff(p0,p2)<=tolSame and pctDiff(p2,p4)<=tolSame
+        isTB = t0==-1 and t1==1 and t2==-1 and t3==1 and t4==-1 and pctDiff(p0,p2)<=tolSame and pctDiff(p2,p4)<=tolSame
+        neck = t1==-1 ? p1 : na
+        bear := isTT and C<neck and volOK()
+        bull := isTB and C>neck and volOK()
+        ok := bull or bear
+    [ok,bull,bear]
+
+// 8) レンジ
+rangeLen = input.int(70, "レンジ探索長（本）", group="詳細：レンジ/チャネル/拡大型")
+f_RANGE() =>
+    ok=false, bull=false, bear=false
+    hi = ta.highest(H, rangeLen)
+    lo = ta.lowest(L,  rangeLen)
+    drawLine(bar_index-rangeLen, hi, bar_index, hi, extend.right, 2, color.new(color.gray,0))
+    drawLine(bar_index-rangeLen, lo, bar_index, lo, extend.right, 2, color.new(color.gray,0))
+    bull := C>hi and volOK()
+    bear := C<lo and volOK()
+    ok := bull or bear
+    [ok,bull,bear]
+
+// 9) 回帰チャネル
+chLen = input.int(90, "回帰チャネル長（本）", group="詳細：レンジ/チャネル/拡大型")
+f_CHANNEL() =>
+    ok=false, bull=false, bear=false
+    if chLen>10
+        lr = ta.linreg(C, chLen, 0)
+        sd = ta.stdev(C, chLen)
+        up = lr + sd
+        dn = lr - sd
+        drawLine(bar_index-chLen, up[chLen-1], bar_index, up, extend.right, 2, color.new(color.navy,0))
+        drawLine(bar_index-chLen, dn[chLen-1], bar_index, dn, extend.right, 2, color.new(color.navy,0))
+        bull := C>up and volOK()
+        bear := C<dn and volOK()
+        ok := bull or bear
+    [ok,bull,bear]
+
+// 10) ブロードニング
+f_BROAD() =>
+    ok=false, bull=false, bear=false
+    if array.size(sT)>=6
+        [aH, hx1, hp1] = getLast( 1, array.size(sT)-1)
+        [bH, hx2, hp2] = getLast( 1, array.size(sT)-2)
+        [aL, lx1, lp1] = getLast(-1, array.size(sT)-1)
+        [bL, lx2, lp2] = getLast(-1, array.size(sT)-2)
+        sH=slope(hx2,hp2,hx1,hp1)
+        sL=slope(lx2,lp2,lx1,lp1)
+        expanding = sH>0 and sL<0 and pctDiff(math.abs(sH),math.abs(sL))<=tolSlope
+        yH=y_on(sH, bar_index, hx1, hp1)
+        yL=y_on(sL, bar_index, lx1, lp1)
+        drawLine(hx2,hp2, bar_index, yH, extend.right, 2, color.new(color.maroon,0))
+        drawLine(lx2,lp2, bar_index, yL, extend.right, 2, color.new(color.maroon,0))
+        bull := expanding and C>yH and volOK()
+        bear := expanding and C<yL and volOK()
+        ok := bull or bear
+    [ok,bull,bear]
+
+// 11) ハーモニック（簡易）
+ratioOk(val,tgt,tol)=> math.abs(val - tgt)/tgt*100.0 <= tol
+between(val,lo,hi)=> val>=lo and val<=hi
+f_HARMONIC() =>
+    ok=false, bull=false, bear=false, name=""
+    if array.size(sT) >= 10
+        ix = array.size(sT)-5
+        i0 = array.size(sT)-4
+        i1 = array.size(sT)-3
+        i2 = array.size(sT)-2
+        i3 = array.size(sT)-1
+        Xp=array.get(sP,ix)
+        Ap=array.get(sP,i0)
+        Bp=array.get(sP,i1)
+        Cp=array.get(sP,i2)
+        Dp=array.get(sP,i3)
+        Dt=array.get(sT,i3)
+        XA=Ap-Xp, AB=Bp-Ap, BC=Cp-Bp
+        rAB=math.abs(AB/XA), rBC=math.abs(BC/AB), rXD=math.abs((Dp-Xp)/XA)
+        gart = ratioOk(rAB,0.618,harmTol) and between(rBC,0.382,0.886)
+        bat  = between(rAB,0.382,0.5)     and between(rBC,0.382,0.886)
+        fly  = ratioOk(rAB,0.786,harmTol)
+        crab = between(rAB,0.382,0.618)
+        isBull = (Dt==-1)
+        isBear = (Dt==1)
+        bull := (isBull and ((gart and ratioOk(rXD,0.786,harmTol)) or (bat and ratioOk(rXD,0.886,harmTol)) or (crab and between(rXD,1.5,1.7))))
+        bear := (isBear and ((gart and ratioOk(rXD,0.786,harmTol)) or (bat and ratioOk(rXD,0.886,harmTol)) or (fly and between(rXD,1.2,1.7))))
+        if bull or bear
+            name := bull ? (gart?"Gartley Bullish": bat?"Bat Bullish": crab?"Crab Bullish":"Harmonic Bullish") :                            (gart?"Gartley Bearish": bat?"Bat Bearish": fly?"Butterfly Bearish":"Harmonic Bearish")
+            ok := true
+    [ok,bull,bear,name]
+
+// 12) ダイヤモンド
+f_DIAMOND() =>
+    ok=false, bull=false, bear=false
+    [okB,bullB,bearB] = f_BROAD()
+    [okT,bullT,bearT] = f_TRI()
+    if okB and okT
+        bull := bullT
+        bear := bearT
+        ok := true
+    [ok,bull,bear]
+
+// 13) ラウンディング（毎バーSMA）
+rbLen = input.int(80, "ラウンディング回帰長（本）", group="詳細：ラウンディング/ダイヤモンド")
+maLen = math.max(5, math.round(rbLen*0.2))
+maRB  = ta.sma(C, maLen)
+f_ROUNDING() =>
+    ok=false, bull=false
+    d1 = maRB - maRB[1]
+    d2 = d1 - d1[1]
+    convex = ta.sma(d2, 5) > 0
+    leftHigh = ta.highest(H, rbLen)
+    bull := bar_index > rbLen and convex and C > leftHigh and volOK()
+    ok := bull
+    [ok,bull]
+
+//================= シグナル（返すだけ） =================
+emitSignal(_name,_bull,_bear) =>
+    s   = _bull ? bullScore : _bear ? bearScore : 0
+    dir = _bull ? "上向" : _bear ? "下向" : "—"
+    tag = _bull or _bear ? (_bull ? (s>=scoreForStrong?"強勢":"中立") : (s>=scoreForWeak?"弱勢":"中立")) : "中立"
+    tp  = _bull ? C + atr*riskATRmultTP : _bear ? C - atr*riskATRmultTP : na
+    sl  = _bull ? C - atr*riskATRmultSL : _bear ? C + atr*riskATRmultSL : na
+    bg  = shadeBack ? shadeColor(_bull,_bear,s) : na
+    [dir, tag, tp, sl, s, bg]
+
+//================= 実行（トップレベル更新） =================
+detected = false
+color bgCol = na  // ★毎バー初期化：最後に1回だけbgcolor()で使用
+
+applyTop(_name,_bull,_bear) =>
+    emitSignal(_name,_bull,_bear)
+
+// 以降、各ブロックで bgCol := bg_ のみ（bgcolorは最後に1回）
+if not detected and useDTDB
+    [ok,bull,bear,neck] = f_DTDB()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ダブル"+(bull?"ボトム":"トップ"), bull, bear)
+        lastPattern := "ダブル"+(bull?"ボトム":"トップ")
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-DTDB", strategy.long, comment=lastPattern)
+                strategy.exit("XL-DTDB", from_entry="LONG-DTDB", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-DTDB", strategy.short, comment=lastPattern)
+                strategy.exit("XS-DTDB", from_entry="SHORT-DTDB", stop=sl_, limit=tp_ )
+        detected := true
+
+if not detected and useHS
+    [ok,bull,bear] = f_HS()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop(bull?"逆H&S":"H&S", bull, bear)
+        lastPattern := bull?"逆H&S":"H&S"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-HS", strategy.long, comment=lastPattern)
+                strategy.exit("XL-HS", from_entry="LONG-HS", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-HS", strategy.short, comment=lastPattern)
+                strategy.exit("XS-HS", from_entry="SHORT-HS", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useTri
+    [ok,bull,bear] = f_TRI()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("三角保ち合い", bull, bear)
+        lastPattern := "三角保ち合い"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-TRI", strategy.long, comment=lastPattern)
+                strategy.exit("XL-TRI", from_entry="LONG-TRI", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-TRI", strategy.short, comment=lastPattern)
+                strategy.exit("XS-TRI", from_entry="SHORT-TRI", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useFlag
+    [ok,bull,bear] = f_FLAG()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("フラッグ/ペナント", bull, bear)
+        lastPattern := "フラッグ/ペナント"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-FLAG", strategy.long, comment=lastPattern)
+                strategy.exit("XL-FLAG", from_entry="LONG-FLAG", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-FLAG", strategy.short, comment=lastPattern)
+                strategy.exit("XS-FLAG", from_entry="SHORT-FLAG", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useWedge
+    [ok,bull,bear] = f_WEDGE()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ウェッジ", bull, bear)
+        lastPattern := "ウェッジ"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-WEDGE", strategy.long, comment=lastPattern)
+                strategy.exit("XL-WEDGE", from_entry="LONG-WEDGE", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-WEDGE", strategy.short, comment=lastPattern)
+                strategy.exit("XS-WEDGE", from_entry="SHORT-WEDGE", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useCwH
+    [ok,bull] = f_CWH()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("カップ・ウィズ・ハンドル", bull, false)
+        lastPattern := "カップ・ウィズ・ハンドル"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, low, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry and bull and strategy.position_size <= 0
+            strategy.entry("LONG-CWH", strategy.long, comment=lastPattern)
+            strategy.exit("XL-CWH", from_entry="LONG-CWH", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useTriple
+    [ok,bull,bear] = f_TRIPLE()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("トリプル"+(bull?"ボトム":"トップ"), bull, bear)
+        lastPattern := "トリプル"+(bull?"ボトム":"トップ")
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-TRIPLE", strategy.long, comment=lastPattern)
+                strategy.exit("XL-TRIPLE", from_entry="LONG-TRIPLE", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-TRIPLE", strategy.short, comment=lastPattern)
+                strategy.exit("XS-TRIPLE", from_entry="SHORT-TRIPLE", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useRange
+    [ok,bull,bear] = f_RANGE()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("レンジ・ブレイク", bull, bear)
+        lastPattern := "レンジ・ブレイク"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-RANGE", strategy.long, comment=lastPattern)
+                strategy.exit("XL-RANGE", from_entry="LONG-RANGE", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-RANGE", strategy.short, comment=lastPattern)
+                strategy.exit("XS-RANGE", from_entry="SHORT-RANGE", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useCh
+    [ok,bull,bear] = f_CHANNEL()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("回帰チャネル・ブレイク", bull, bear)
+        lastPattern := "回帰チャネル・ブレイク"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-CH", strategy.long, comment=lastPattern)
+                strategy.exit("XL-CH", from_entry="LONG-CH", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-CH", strategy.short, comment=lastPattern)
+                strategy.exit("XS-CH", from_entry="SHORT-CH", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useBroad
+    [ok,bull,bear] = f_BROAD()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ブロードニング", bull, bear)
+        lastPattern := "ブロードニング"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-BROAD", strategy.long, comment=lastPattern)
+                strategy.exit("XL-BROAD", from_entry="LONG-BROAD", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-BROAD", strategy.short, comment=lastPattern)
+                strategy.exit("XS-BROAD", from_entry="SHORT-BROAD", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useHarm
+    [ok,bull,bear,nameH] = f_HARMONIC()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ハーモニック｜"+nameH, bull, bear)
+        lastPattern := "ハーモニック｜"+nameH
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-HARM", strategy.long, comment=lastPattern)
+                strategy.exit("XL-HARM", from_entry="LONG-HARM", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-HARM", strategy.short, comment=lastPattern)
+                strategy.exit("XS-HARM", from_entry="SHORT-HARM", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useDiamond
+    [ok,bull,bear] = f_DIAMOND()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ダイヤモンド", bull, bear)
+        lastPattern := "ダイヤモンド"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, bull?low:high, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry
+            if bull and strategy.position_size <= 0
+                strategy.entry("LONG-DIA", strategy.long, comment=lastPattern)
+                strategy.exit("XL-DIA", from_entry="LONG-DIA", stop=sl_, limit=tp_)
+            if bear and strategy.position_size >= 0
+                strategy.entry("SHORT-DIA", strategy.short, comment=lastPattern)
+                strategy.exit("XS-DIA", from_entry="SHORT-DIA", stop=sl_, limit=tp_)
+        detected := true
+
+if not detected and useRound
+    [ok,bull] = f_ROUNDING()
+    if ok
+        [d,tg,tp_,sl_,sc_,bg_] = applyTop("ラウンディングボトム", bull, false)
+        lastPattern := "ラウンディングボトム"
+        lastSide := d, lastTag := tg, lastTP := tp_, lastSL := sl_, lastScore := sc_, lastBar := bar_index
+        bgCol := bg_
+        mkLbl(bar_index, low, lastPattern+"｜"+d+"｜"+tg)
+        if useEntry and bull and strategy.position_size <= 0
+            strategy.entry("LONG-RB", strategy.long, comment=lastPattern)
+            strategy.exit("XL-RB", from_entry="LONG-RB", stop=sl_, limit=tp_)
+        detected := true
+
+showPanelInfo()
+
+// ★背景はここで1回だけ適用（ローカル禁止対策）
+bgcolor(bgCol)
+
+//================= アラート =================
+var string alertMsg = ""
+alertMsg := "Pattern="+lastPattern+" | Side="+lastSide+" | Score="+str.tostring(lastScore)+            " | Tag="+lastTag+" | TP="+(na(lastTP)?"—":str.tostring(lastTP, format.mintick))+            " | SL="+(na(lastSL)?"—":str.tostring(lastSL, format.mintick))+            " | Close="+str.tostring(C, format.mintick)+" | TF="+tfUse+" | Ticker="+syminfo.ticker
+
+haveLong  = strategy.position_size > 0
+haveShort = strategy.position_size < 0
+touchTP = (haveLong and high>=lastTP) or (haveShort and low<=lastTP)
+touchSL = (haveLong and low<=lastSL)  or (haveShort and high>=lastSL)
+
+// 1) alertconditionは「固定メッセージのみ」でトリガ登録（UIで使う用）
+alertcondition(touchTP,  title="Ultra：利確到達", message="TP Hit")
+alertcondition(touchSL,  title="Ultra：損切到達", message="SL Hit")
+alertcondition(haveLong and barstate.isconfirmed,  title="Ultra：ロング保有",  message="HOLD LONG")
+alertcondition(haveShort and barstate.isconfirmed, title="Ultra：ショート保有", message="HOLD SHORT")
+
+// 2) 実運用は alert() で「動的メッセージ」を送る（こちらはseries可）
+if touchTP
+    alert("TP Hit | " + alertMsg, alert.freq_once_per_bar_close)
+if touchSL
+    alert("SL Hit | " + alertMsg, alert.freq_once_per_bar_close)
+if haveLong and barstate.isconfirmed
+    alert("HOLD LONG | " + alertMsg, alert.freq_once_per_bar)
+if haveShort and barstate.isconfirmed
+    alert("HOLD SHORT | " + alertMsg, alert.freq_once_per_bar)
