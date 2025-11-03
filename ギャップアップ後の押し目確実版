@@ -1,0 +1,152 @@
+//@version=6
+indicator("Pullback Buy 失敗しない完全版 v6.4", overlay=true, scale=scale.right, max_labels_count=500, max_lines_count=500)
+
+// ========= Inputs（最初は “甘め” に出す） =========
+useVWAP        = input.bool(true,  "VWAPを基準にする", inline="a")
+atrLen         = input.int(14,     "ATR期間", minval=5, inline="a")
+atrMultEntry   = input.float(1.20, "買いゾーン ATR×", step=0.05, tooltip="数値↑でゾーンを深く＝PBが出やすい")
+
+// 追加フィルタ（後から締める用）
+useGapFilter   = input.bool(false, "ギャップ条件を使う（決算翌日向け）")
+minGap         = input.float(0.5,  "最小ギャップ(%)", step=0.1)
+maxGap         = input.float(6.0,  "最大ギャップ(%)", step=0.1)
+
+usePrevHigh    = input.bool(false, "前日高の上だけ許可")
+useRSI         = input.bool(false, "RSIフィルタを使う")
+rsiLen         = input.int(14,     "RSI期間")
+rsiMin         = input.int(40,     "RSI下限（これ以上）")
+useRR          = input.bool(false, "最小RRでふるい落とす")
+rrMin          = input.float(1.2,  "最低RR(Target1/Stop)")
+
+firstPBOnly    = input.bool(false, "寄り後は最初のPBだけ許可")
+cooldownPB     = input.int(5,      "PBクールダウン本数", minval=0)
+touchWindow    = input.int(120,    "ゾーン接触→判定まで許容本数", minval=5, maxval=240)
+
+// 出来高
+volLen         = input.int(20,     "出来高SMA期間", inline="v")
+volRatioTh     = input.float(1.5,  "出来高倍率しきい値", step=0.1, inline="v")
+volNearK       = input.float(0.50, "Vol: VWAP近傍(ATR倍)", step=0.05)
+volWindowMin   = input.int(240,    "Vol: 寄り後○分以内のみ（0=終日）", minval=0)
+cooldownVol    = input.int(3,      "Vol: クールダウン本数", minval=0)
+
+// 表示
+showZones      = input.bool(true,  "買いゾーン帯を表示")
+showTargets    = input.bool(true,  "Target/Stopを表示")
+showMarkers    = input.bool(true,  "マーカー（PB/Vol）を表示")
+lightMode      = input.bool(false, "軽量表示（ラベル抑制）")
+debug          = input.bool(false, "PB×の却下理由ラベル")
+
+// Alerts の有効/無効
+alertPB        = input.bool(true,  "アラート：Pullback Buy")
+alertVol       = input.bool(true,  "アラート：Volume Spike")
+alertCombo     = input.bool(true,  "アラート：PB+Vol 同時")
+
+// ========= Series =========
+float vwap_     = ta.vwap(hlc3)
+float atr       = ta.atr(atrLen)
+float volMA     = ta.sma(volume, volLen)
+float volRatio  = volume / math.max(volMA, 1)
+float rsi       = ta.rsi(close, rsiLen)
+
+// ---- ギャップ（寄りの最初のバーで確定→その日固定）----
+bool  firstBar   = session.isfirstbar
+float prevCloseD = request.security(syminfo.tickerid, "D", close[1], gaps=barmerge.gaps_off)
+float gapNow     = (open - prevCloseD) / math.max(prevCloseD, 1e-9) * 100
+var   float gapPct = na
+gapPct := firstBar ? gapNow : gapPct[1]
+bool gapOK = useGapFilter ? (not na(gapPct) and gapPct >= minGap and gapPct <= maxGap) : true
+
+// ---- セッション開始→経過分（分） ----
+var int sessStart = na
+if session.isfirstbar
+    sessStart := time
+int minsFromOpen = na(sessStart) ? 0 : int((time - sessStart) / 60000)
+
+// ---- 前日高 ----
+float yHigh  = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off)
+bool prevHighOK = usePrevHigh ? (close > yHigh) : true
+
+// ========= ゾーン判定（失敗しないよう広め・重複許可） =========
+float zoneHi = vwap_ - atr * (atrMultEntry * 0.40)
+float zoneLo = vwap_ - atr * (atrMultEntry)
+bool  inZone = (low <= zoneHi and high >= zoneLo)  // バーが帯とかぶっていればOK
+
+// 直近接触管理
+var int lastTouch = na
+if inZone
+    lastTouch := bar_index
+bool touchedRecently = not na(lastTouch) and (bar_index - lastTouch <= touchWindow)
+
+// ========= PB（押し目→VWAP再浮上） =========
+bool crossUp     = ta.crossover(close, vwap_)
+bool rsiOK       = useRSI ? (rsi >= rsiMin) : true
+bool pbRaw       = touchedRecently and crossUp and rsiOK and gapOK and prevHighOK
+
+// RR とストップ／ターゲット
+float stopLvl  = close - atr * 1.0
+float target1  = close + atr * 0.8
+float target2  = close + atr * 1.6
+float rrNow    = (target1 - close) / math.max(close - stopLvl, syminfo.mintick)
+bool rrOK      = useRR ? (rrNow >= rrMin) : true
+
+// PB 実戦フィルタ
+string reason = ""
+bool   pullbackBuy = pbRaw and rrOK
+// 寄り後1発だけ
+if firstPBOnly
+    var bool firstDone = false
+    if firstBar
+        firstDone := false
+    if pullbackBuy and firstDone
+        pullbackBuy := false, reason := "firstOnly"
+    if pullbackBuy and not firstDone
+        firstDone := true
+// クールダウン
+var int lastPB = na
+bool canPB = na(lastPB) or (bar_index - lastPB >= cooldownPB)
+if pullbackBuy and not canPB
+    pullbackBuy := false, reason := "cooldown"
+if pullbackBuy
+    lastPB := bar_index
+if not pbRaw
+    // 簡易理由（debug用）
+    reason := not touchedRecently ? "noTouch" :
+              not crossUp        ? "noCross" :
+              useRSI and not rsiOK ? "rsi" :
+              useGapFilter and not gapOK ? "gap" :
+              usePrevHigh and not prevHighOK ? "prevHigh" :
+              useRR and not rrOK ? "rr" : reason
+
+// ========= Volume Spike（“鳴り過ぎ”防止） =========
+bool nearVWAP = math.abs(close - vwap_) <= atr * volNearK
+bool inVolWin = volWindowMin == 0 ? true : (minsFromOpen <= volWindowMin)
+var  int lastVol = na
+bool volBase   = (volRatio >= volRatioTh) and nearVWAP and inVolWin and gapOK
+bool volSpike  = volBase and (na(lastVol) or bar_index - lastVol >= cooldownVol)
+if volSpike
+    lastVol := bar_index
+
+bool combo = pullbackBuy and volSpike
+
+// ========= 描画（Y軸は常にバー基準） =========
+plot(vwap_, "VWAP", color=color.new(color.blue, 0), linewidth=2)
+plot(showZones ? zoneHi : na, "BuyZone High", color=color.new(color.green, 0),  style=plot.style_linebr)
+plot(showZones ? zoneLo : na, "BuyZone Low",  color=color.new(color.green, 60), style=plot.style_linebr)
+bgcolor(showZones and inZone ? color.new(color.green, 88) : na)
+
+plot(showTargets ? target1 : na, "Target1", color=color.new(color.orange,  0), style=plot.style_linebr)
+plot(showTargets ? target2 : na, "Target2", color=color.new(color.orange, 40), style=plot.style_linebr)
+plot(showTargets ? stopLvl : na,  "Stop",   color=color.new(color.red,    0), style=plot.style_linebr)
+
+plotshape(showMarkers and pullbackBuy, title="PB",  style=shape.triangleup, location=location.belowbar,
+          size=size.large, color=color.new(color.green, 0), text="PB")
+plotshape(showMarkers and volSpike,    title="Vol", style=shape.circle,     location=location.abovebar,
+          size=size.tiny,  color=color.new(color.blue, 0),  text="Vol")
+
+if debug and not lightMode and (not pullbackBuy) and reason != ""
+    label.new(bar_index, low, "PB×:"+reason, yloc=yloc.belowbar,        style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0))
+
+// ========= Alerts（定数文字列のみ） =========
+alertcondition(alertPB    ? pullbackBuy : false, title="Pullback Buy",  message="PB: 押し目→VWAP再浮上（確定）")
+alertcondition(alertVol   ? volSpike    : false, title="Volume Spike",  message="Vol: 出来高スパイク（近傍×時間帯×倍率）")
+alertcondition(alertCombo ? combo       : false, title="PB+Vol Combo",  message="PBとVolが同時成立")
