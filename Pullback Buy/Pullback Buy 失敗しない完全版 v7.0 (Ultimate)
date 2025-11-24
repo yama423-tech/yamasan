@@ -1,0 +1,219 @@
+//@version=6
+indicator("Pullback Buy 失敗しない完全版 v7.0 (Ultimate)", overlay=true, scale=scale.right, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. 感度・戦略設定 (Strategy Sensitivity)
+// ==========================================
+group_strat = "📊 戦略感度設定"
+sensitivity = input.string("Lv3: Normal", "エントリー感度", options=["Lv1: Ultra Safe", "Lv2: Safe", "Lv3: Normal", "Lv4: Aggressive", "Lv5: Scalper"], group=group_strat, tooltip="Lvが低いほど深い押し目＆広いストップ（勝率重視）。\nLvが高いほど浅い押し目＆狭いストップ（回転重視）。")
+
+// 感度に応じたパラメータの自動マッピング
+var float s_zoneMult = na  // ゾーンの深さ係数
+var float s_slMult   = na  // ストップ幅係数
+var float s_tp1Mult  = na  // TP1幅係数
+
+if sensitivity == "Lv1: Ultra Safe"
+    s_zoneMult := 1.8, s_slMult := 1.5, s_tp1Mult := 1.0
+else if sensitivity == "Lv2: Safe"
+    s_zoneMult := 1.5, s_slMult := 1.2, s_tp1Mult := 0.9
+else if sensitivity == "Lv3: Normal"
+    s_zoneMult := 1.2, s_slMult := 1.0, s_tp1Mult := 0.8
+else if sensitivity == "Lv4: Aggressive"
+    s_zoneMult := 0.9, s_slMult := 0.8, s_tp1Mult := 0.7
+else // Lv5
+    s_zoneMult := 0.6, s_slMult := 0.6, s_tp1Mult := 0.6
+
+// 既存の入力（微調整用）
+atrLen       = input.int(14,     "ATR期間 (ベース)", minval=5, group=group_strat)
+useVWAP      = input.bool(true,  "VWAPを基準にする", group=group_strat)
+
+// ==========================================
+// 2. フィルター設定 (Filters)
+// ==========================================
+group_filter = "🛡️ フィルター条件"
+useGapFilter = input.bool(false, "ギャップ条件（決算翌日等）", group=group_filter)
+minGap       = input.float(0.5,  "最小ギャップ(%)", step=0.1, group=group_filter)
+maxGap       = input.float(6.0,  "最大ギャップ(%)", step=0.1, group=group_filter)
+
+usePrevHigh  = input.bool(false, "前日高値より上のみ許可", group=group_filter)
+useRSI       = input.bool(false, "RSIフィルタ", group=group_filter)
+rsiLen       = input.int(14,     "RSI期間", group=group_filter)
+rsiMin       = input.int(40,     "RSI下限", group=group_filter)
+useRR        = input.bool(false, "リスクリワード(RR)フィルタ", group=group_filter)
+rrMin        = input.float(1.2,  "最低RR (TP1/SL)", group=group_filter)
+
+// 制御系
+firstPBOnly  = input.bool(false, "寄り付き後、最初の1回のみ", group=group_filter)
+cooldownPB   = input.int(5,      "連打防止（クールダウン本数）", minval=0, group=group_filter)
+touchWindow  = input.int(120,    "ゾーン接触後の有効期間(本)", minval=5, maxval=240, group=group_filter)
+
+// ==========================================
+// 3. 出来高設定 (Volume)
+// ==========================================
+group_vol    = "🔊 出来高検知"
+volLen       = input.int(20,     "出来高SMA期間", group=group_vol)
+volRatioTh   = input.float(1.5,  "急増倍率しきい値", step=0.1, group=group_vol)
+volNearK     = input.float(0.50, "VWAP近傍判定(ATR倍)", step=0.05, group=group_vol)
+volWindowMin = input.int(240,    "寄り後有効時間(分/0=終日)", minval=0, group=group_vol)
+cooldownVol  = input.int(3,      "Volクールダウン本数", minval=0, group=group_vol)
+
+// ==========================================
+// 4. ビジュアル・色設定 (Visuals)
+// ==========================================
+group_vis    = "🎨 色と表示の調整"
+showZones    = input.bool(true,  "買いゾーン帯を表示", group=group_vis)
+showTargets  = input.bool(true,  "現在のTP/SLを表示", group=group_vis)
+showLines    = input.bool(true,  "シグナル時のTP/SLラインを残す", group=group_vis, tooltip="過去のエントリー位置のTP/SLをライン描画します")
+showMarkers  = input.bool(true,  "マーカー（PB/Vol）を表示", group=group_vis)
+
+// 色設定
+c_zone       = input.color(color.green, "ゾーン色", group=group_vis)
+t_zone       = input.int(90, "ゾーン透明度(0-100)", minval=0, maxval=100, group=group_vis)
+c_tp         = input.color(color.orange, "利確(TP)色", group=group_vis)
+c_sl         = input.color(color.red,    "損切(SL)色", group=group_vis)
+c_txt        = input.color(color.white,  "ラベル文字色", group=group_vis)
+
+lightMode    = input.bool(false, "軽量表示（ラベル抑制）", group=group_vis)
+debug        = input.bool(false, "デバッグ（却下理由を表示）", group=group_vis)
+
+// Alerts
+group_alert  = "🔔 アラート設定"
+alertPB      = input.bool(true,  "アラート：Pullback Buy", group=group_alert)
+alertVol     = input.bool(true,  "アラート：Volume Spike", group=group_alert)
+alertCombo   = input.bool(true,  "アラート：PB+Vol 同時", group=group_alert)
+
+// ==========================================
+// 計算ロジック (Calculation)
+// ==========================================
+float vwap_     = ta.vwap(hlc3)
+float atr       = ta.atr(atrLen)
+float volMA     = ta.sma(volume, volLen)
+float volRatio  = volume / math.max(volMA, 1)
+float rsi       = ta.rsi(close, rsiLen)
+
+// ---- ギャップ ----
+bool  firstBar  = session.isfirstbar
+float prevCloseD = request.security(syminfo.tickerid, "D", close[1], gaps=barmerge.gaps_off)
+float gapNow    = (open - prevCloseD) / math.max(prevCloseD, 1e-9) * 100
+var   float gapPct = na
+gapPct := firstBar ? gapNow : gapPct[1]
+bool gapOK = useGapFilter ? (not na(gapPct) and gapPct >= minGap and gapPct <= maxGap) : true
+
+// ---- 時間経過 ----
+var int sessStart = na
+if session.isfirstbar
+    sessStart := time
+int minsFromOpen = na(sessStart) ? 0 : int((time - sessStart) / 60000)
+
+// ---- 前日高 ----
+float yHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off)
+bool prevHighOK = usePrevHigh ? (close > yHigh) : true
+
+// ========= ゾーン判定 (感度設定を使用) =========
+// ゾーンの上限・下限計算
+float zoneHi = vwap_ - atr * (s_zoneMult * 0.40) 
+float zoneLo = vwap_ - atr * (s_zoneMult)
+
+bool  inZone = (low <= zoneHi and high >= zoneLo)
+
+// 直近接触管理
+var int lastTouch = na
+if inZone
+    lastTouch := bar_index
+bool touchedRecently = not na(lastTouch) and (bar_index - lastTouch <= touchWindow)
+
+// ========= PB判定 =========
+bool crossUp     = ta.crossover(close, vwap_)
+bool rsiOK       = useRSI ? (rsi >= rsiMin) : true
+bool pbRaw       = touchedRecently and crossUp and rsiOK and gapOK and prevHighOK
+
+// RR とストップ／ターゲット (感度設定を使用)
+float stopLvl  = close - atr * s_slMult
+float target1  = close + atr * s_tp1Mult
+float target2  = close + atr * (s_tp1Mult * 2.0)
+
+float rrNow    = (target1 - close) / math.max(close - stopLvl, syminfo.mintick)
+bool rrOK      = useRR ? (rrNow >= rrMin) : true
+
+// PB 実戦フィルタ
+string reason = ""
+bool   pullbackBuy = pbRaw and rrOK
+
+// 寄り後1発だけ
+if firstPBOnly
+    var bool firstDone = false
+    if firstBar
+        firstDone := false
+    if pullbackBuy and firstDone
+        pullbackBuy := false, reason := "firstOnly"
+    if pullbackBuy and not firstDone
+        firstDone := true
+
+// クールダウン
+var int lastPB = na
+bool canPB = na(lastPB) or (bar_index - lastPB >= cooldownPB)
+if pullbackBuy and not canPB
+    pullbackBuy := false, reason := "cooldown"
+if pullbackBuy
+    lastPB := bar_index
+
+// 却下理由の特定
+if not pbRaw
+    reason := not touchedRecently ? "noTouch" :
+              not crossUp        ? "noCross" :
+              useRSI and not rsiOK ? "rsi" :
+              useGapFilter and not gapOK ? "gap" :
+              usePrevHigh and not prevHighOK ? "prevHigh" :
+              useRR and not rrOK ? "rr" : reason
+
+// ========= Volume Spike =========
+bool nearVWAP = math.abs(close - vwap_) <= atr * volNearK
+bool inVolWin = volWindowMin == 0 ? true : (minsFromOpen <= volWindowMin)
+var  int lastVol = na
+bool volBase  = (volRatio >= volRatioTh) and nearVWAP and inVolWin and gapOK
+bool volSpike = volBase and (na(lastVol) or bar_index - lastVol >= cooldownVol)
+if volSpike
+    lastVol := bar_index
+
+bool combo = pullbackBuy and volSpike
+
+// ==========================================
+// 描画 (Drawing)
+// ==========================================
+// VWAP
+plot(vwap_, "VWAP", color=color.new(color.blue, 0), linewidth=2)
+
+// Zone (透明度を適用)
+p_zHi = plot(showZones ? zoneHi : na, "Zone Hi", color=color.new(c_zone, t_zone), style=plot.style_linebr)
+p_zLo = plot(showZones ? zoneLo : na, "Zone Lo", color=color.new(c_zone, t_zone), style=plot.style_linebr)
+fill(p_zHi, p_zLo, color=showZones and inZone ? color.new(c_zone, t_zone) : na)
+
+// Current TP/SL (現在のバーのみ)
+plot(showTargets ? target1 : na, "Target1", color=color.new(c_tp, 30), style=plot.style_circles)
+plot(showTargets ? stopLvl : na, "Stop",    color=color.new(c_sl, 30), style=plot.style_circles)
+
+// PB Markers
+plotshape(showMarkers and pullbackBuy, title="PB Entry", style=shape.triangleup, location=location.belowbar,
+          size=size.large, color=c_zone, text="BUY", textcolor=c_txt)
+
+// Vol Markers
+plotshape(showMarkers and volSpike,    title="Vol Spike", style=shape.circle,     location=location.abovebar,
+          size=size.tiny,  color=color.new(color.blue, 0), text="Vol")
+
+// Debug Label
+if debug and not lightMode and (not pullbackBuy) and reason != ""
+    label.new(bar_index, low, "×:"+reason, yloc=yloc.belowbar, style=label.style_label_up, textcolor=c_txt, color=color.new(color.red, 50), size=size.small)
+
+// --- NEW: シグナル時のTP/SLライン描画 ---
+if showLines and pullbackBuy
+    // Stop Line
+    line.new(bar_index, stopLvl, bar_index + 10, stopLvl, color=color.new(c_sl, 30), style=line.style_dashed)
+    // TP1 Line
+    line.new(bar_index, target1, bar_index + 10, target1, color=color.new(c_tp, 30), style=line.style_dotted)
+    // Entry Marker Line (Optional: short horizontal at close)
+    // line.new(bar_index, close, bar_index+3, close, color=color.gray)
+
+// Alerts
+alertcondition(alertPB    ? pullbackBuy : false, title="Pullback Buy",  message="PB: Entry Signal")
+alertcondition(alertVol   ? volSpike    : false, title="Volume Spike",  message="Vol: Volume Spike")
+alertcondition(alertCombo ? combo       : false, title="PB+Vol Combo",  message="Combo: PB & Vol Spike")
