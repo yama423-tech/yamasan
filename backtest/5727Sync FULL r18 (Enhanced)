@@ -1,0 +1,163 @@
+//@version=6
+strategy(title="5727Sync FULL r18 (Enhanced)", shorttitle="5727Sync_v18",
+     overlay=true, initial_capital=1000000, currency=currency.JPY,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=false)
+
+//==================== 1. 設定：期間と資金 ====================
+groupTime = "バックテスト期間"
+useDate   = input.bool(false, "期間指定を有効にする", group=groupTime)
+startYear = input.int(2024, "開始 年", group=groupTime)
+startMo   = input.int(1,    "開始 月", group=groupTime)
+startDy   = input.int(1,    "開始 日", group=groupTime)
+endYear   = input.int(2030, "終了 年", group=groupTime)
+endMo     = input.int(12,   "終了 月", group=groupTime)
+endDy     = input.int(31,   "終了 日", group=groupTime)
+
+// 期間判定関数
+inDateRange() =>
+    not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
+
+//==================== 2. 設定：コアロジック ====================
+groupCore  = "コア設定"
+emaFastLen = input.int(12,  "EMA Fast", minval=2, group=groupCore)
+emaSlowLen = input.int(26,  "EMA Slow", minval=2, group=groupCore)
+atrLen     = input.int(14,  "ATR期間",   minval=2, group=groupCore)
+rsiLen     = input.int(14,  "RSI期間",   minval=2, group=groupCore)
+rsiMin     = input.int(45,  "RSI下限（基準）", minval=0, maxval=100, group=groupCore)
+
+groupRisk  = "リスク管理"
+tp1Mult    = input.float(1.2, "TP1 ATR倍率", step=0.1, group=groupRisk)
+tp2Mult    = input.float(2.0, "TP2 ATR倍率", step=0.1, group=groupRisk)
+slMult     = input.float(1.2, "SL ATR倍率",  step=0.1, group=groupRisk)
+useTP1     = input.bool(true, "TP1を使う（部分利確ON）", group=groupRisk)
+partPct    = input.int(50,    "TP1利確比率（%）", minval=0, maxval=100, group=groupRisk)
+
+groupTune    = "頻度/条件調整"
+cooldownBars = input.int(20,  "クールダウン（最低バー間隔）", minval=0, group=groupTune)
+rsiBoost     = input.float(0.0, "RSI下限 上乗せ（+）", minval=0, maxval=10, step=0.5, group=groupTune)
+emaGapAtr    = input.float(0.0, "価格がEMA Fastより上（ATR倍）", minval=0.0, step=0.1, group=groupTune)
+needRising   = input.bool(true, "RSI上昇必須（rsi > rsi[1]）", group=groupTune)
+tp1Adj       = input.float(1.0, "TP1倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+tp2Adj       = input.float(1.0, "TP2倍率 ×", minval=0.5, maxval=3.0, step=0.1, group=groupTune)
+
+//==================== 3. 設定：可視化とアラート ====================
+groupVis   = "可視化・アラート"
+showMAs    = input.bool(true,  "EMAを表示",         group=groupVis)
+showLines  = input.bool(true,  "TP/SLラインを表示", group=groupVis)
+showTable  = input.bool(true,  "情報パネルを表示",  group=groupVis)
+msgBuy     = input.string("BUY Entry", "Alert Msg: Entry", group=groupVis)
+msgTP      = input.string("TP Hit",    "Alert Msg: TP",    group=groupVis)
+msgSL      = input.string("SL Hit",    "Alert Msg: SL",    group=groupVis)
+
+//==================== 計算処理 ====================
+price   = close
+emaFast = ta.ema(price, emaFastLen)
+emaSlow = ta.ema(price, emaSlowLen)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(price, rsiLen)
+
+// シグナル判定
+trendUp = price > emaFast and emaFast > emaFast[1]
+rsiTh   = rsiMin + rsiBoost
+rsiOk   = rsi >= rsiTh and (not needRising or rsi > rsi[1])
+gapOk   = emaGapAtr == 0.0 or price >= emaFast + atr * emaGapAtr
+biasOk  = emaFast >= emaSlow
+fireBuyRaw = trendUp and rsiOk and biasOk and gapOk
+
+// クールダウン制御
+var int lastSigBar = na
+canSignal = na(lastSigBar) or (bar_index - lastSigBar > cooldownBars)
+
+// 最終エントリートリガー（期間内かつクールダウンOK）
+fireBuy   = fireBuyRaw and canSignal and inDateRange()
+
+//==================== ポジション管理変数 ====================
+var float entryPx   = na
+var float dynStop   = na
+var float targetTP1 = na
+var float targetTP2 = na
+var bool  tp1Hit    = false // TP1到達フラグ
+
+// ポジション状態
+inPos = strategy.position_size > 0
+if not inPos
+    tp1Hit := false // ノーポジになったらフラグクリア
+
+//==================== エントリー処理 ====================
+if fireBuy and not inPos
+    strategy.entry("BUY", strategy.long, alert_message=msgBuy)
+    entryPx    := price
+    dynStop    := entryPx - atr * slMult
+    targetTP1  := entryPx + atr * tp1Mult * tp1Adj
+    targetTP2  := entryPx + atr * tp2Mult * tp2Adj
+    lastSigBar := bar_index
+    tp1Hit     := false
+
+//==================== エグジット処理 (TP/SL) ====================
+// TP1到達検知（HighがTP1を超えたら）
+if inPos and useTP1 and not tp1Hit and high >= targetTP1
+    tp1Hit  := true
+    // SLを建値（エントリー価格）へ引き上げ。ただし元のSLより下がることは防ぐ（max）
+    dynStop := math.max(dynStop, entryPx)
+    alert("TP1 Reached: Moving SL to Breakeven", alert.freq_once_per_bar)
+
+// ストラテジー命令
+if inPos
+    // 部分利確 (TP1)
+    if useTP1 and partPct > 0
+        strategy.exit("TP1", from_entry="BUY", qty_percent=partPct, limit=targetTP1, stop=dynStop, alert_message=msgTP)
+    
+    // 全決済/残り決済 (TP2) - ストップは dynStop (建値移動後はその値)
+    strategy.exit("TP2", from_entry="BUY", qty_percent=100,     limit=targetTP2, stop=dynStop, alert_message=msgSL)
+
+//==================== 描画：インジケーター ====================
+plot(showMAs ? emaFast : na, "EMA Fast", color=color.new(color.teal, 0),   linewidth=2)
+plot(showMAs ? emaSlow : na, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+plot(showMAs and inPos ? dynStop : na, "Dynamic SL", color=color.red, style=plot.style_cross, linewidth=1)
+
+// エントリーサイン
+plotshape(fireBuy and not inPos, title="BUY Mark", style=shape.triangleup,
+          color=color.lime, location=location.belowbar, size=size.large, text="BUY")
+
+//==================== 描画：ライン（TP/SL） ====================
+var line l_tp1 = na, var line l_tp2 = na, var line l_sl = na
+
+if showLines and inPos
+    line.delete(l_tp1), line.delete(l_tp2), line.delete(l_sl) // 再描画のため削除
+    
+    // 現在足から右へ少し伸ばす
+    left = bar_index
+    right = bar_index + 5 
+    
+    if useTP1 and not tp1Hit // TP1未到達時のみ表示
+        l_tp1 := line.new(left, targetTP1, right, targetTP1, color=color.new(color.green, 50), width=1, style=line.style_dashed)
+    
+    l_tp2 := line.new(left, targetTP2, right, targetTP2, color=color.new(color.blue, 50),  width=1, style=line.style_dashed)
+    l_sl  := line.new(left, dynStop,   right, dynStop,   color=color.new(color.red, 50),   width=1, style=line.style_solid)
+else
+    // ポジションなし時は削除
+    line.delete(l_tp1), line.delete(l_tp2), line.delete(l_sl)
+
+//==================== 描画：情報テーブル ====================
+var table statusTable = table.new(position.bottom_right, 2, 5, border_width=1)
+
+if showTable and barstate.islast
+    // テーブルヘッダー
+    table.cell(statusTable, 0, 0, "Status", bgcolor=color.gray, text_color=color.white)
+    table.cell(statusTable, 1, 0, inPos ? "IN POSITION" : "WAITING", bgcolor=inPos ? color.green : color.gray, text_color=color.white)
+    
+    // エントリー価格
+    table.cell(statusTable, 0, 1, "Entry Price", bgcolor=color.new(color.gray, 90))
+    table.cell(statusTable, 1, 1, inPos ? str.tostring(entryPx, format.mintick) : "-", bgcolor=color.new(color.gray, 90))
+
+    // 目標価格
+    table.cell(statusTable, 0, 2, "Next Target", bgcolor=color.new(color.gray, 90))
+    targetShow = inPos ? (tp1Hit ? targetTP2 : targetTP1) : na
+    table.cell(statusTable, 1, 2, inPos ? str.tostring(targetShow, format.mintick) : "-", bgcolor=color.new(color.gray, 90))
+
+    // 現在の含み損益（%）
+    pnlPct = inPos ? (close - entryPx) / entryPx * 100 : 0.0
+    c_pnl  = pnlPct > 0 ? color.teal : pnlPct < 0 ? color.red : color.gray
+    table.cell(statusTable, 0, 3, "Unrealized PnL", bgcolor=c_pnl, text_color=color.white)
+    table.cell(statusTable, 1, 3, inPos ? str.tostring(pnlPct, "#.##") + "%" : "-", bgcolor=c_pnl, text_color=color.white)
