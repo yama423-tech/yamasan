@@ -1,0 +1,253 @@
+//@version=6
+indicator("有望20銘柄用：第1/第2/第3波＋TP/SL帯（Pro UI版）", overlay=true, shorttitle="WTP20 Pro", scale=scale.right)
+
+// ==========================================
+// 🛠 設定パラメータ
+// ==========================================
+
+// --- 1. 精度・ロジック調整 ---
+grp_logic = "ロジック・精度調整"
+tfMode    = input.string("自動", "時間足モード", options=["自動","手動"], group=grp_logic)
+tfManual  = input.string("スイング", "（手動時）設定", options=["短期","スイング","中期","長期"], group=grp_logic)
+filterStr = input.string("標準", "判定シビア度（ダマシ回避）", options=["緩め", "標準", "厳しめ"], group=grp_logic, tooltip="厳しめ＝強いトレンドと出来高が必要（機会は減るが勝率重視）")
+
+// --- 2. デザイン・UI ---
+grp_vis   = "表示・デザイン"
+showMA    = input.bool(true, "MAラインを表示", group=grp_vis)
+showTable = input.bool(true, "情報パネルを表示（右上）", group=grp_vis)
+bgColor   = input.color(color.new(color.black, 50), "パネル背景色", group=grp_vis)
+txtColor  = input.color(color.white, "パネル文字色", group=grp_vis)
+lblSize   = input.string("small", "パネル文字サイズ", options=["tiny", "small", "normal", "large"], group=grp_vis)
+
+// --- 3. リスク管理 ---
+grp_risk  = "リスク管理（TP/SL）"
+useAlert  = input.bool(true, "アラート有効化", group=grp_risk)
+showLines = input.bool(true, "エントリー中のTP/SLラインを表示", group=grp_risk)
+
+// ==========================================
+// 🧠 ロジック計算部
+// ==========================================
+
+// --- 時間足判定 ---
+var string tfClass = "日足"
+if timeframe.isminutes
+    tfClass := timeframe.multiplier <= 15 ? "超短期" : "短期"
+else if timeframe.isdaily
+    tfClass := "日足"
+else if timeframe.isweekly
+    tfClass := "週足"
+else
+    tfClass := "その他"
+
+// --- モード別パラメータ設定 ---
+// デフォルト値
+var int maFast = 20, maMid = 60, maLong = 200
+var int atrLen = 14, adxLen = 14
+var float slMult = 1.2, tp1Mult = 1.2, tp2Mult = 2.0
+var float volMultBase = 1.2
+var int volLen = 60
+
+// 自動判定ロジック
+var string autoMode = "スイング"
+autoMode := timeframe.isminutes ? (timeframe.multiplier <= 60 ? "短期" : "スイング") : timeframe.isdaily ? "スイング" : "中期"
+string selMode = tfMode == "自動" ? autoMode : tfManual
+
+// モード適用
+if selMode == "短期"
+    maFast := 10, maMid := 40, maLong := 150
+    atrLen := 12, adxLen := 12
+    slMult := 1.0, tp1Mult := 1.0, tp2Mult := 1.6
+    volMultBase := 1.1
+    volLen := 40
+else if selMode == "スイング"
+    maFast := 20, maMid := 60, maLong := 200
+    atrLen := 14, adxLen := 14
+    slMult := 1.2, tp1Mult := 1.2, tp2Mult := 2.0
+    volMultBase := 1.2
+    volLen := 60
+else // 中期・長期
+    maFast := 30, maMid := 90, maLong := 220
+    atrLen := 18, adxLen := 18
+    slMult := 1.3, tp1Mult := 1.3, tp2Mult := 2.2
+    volMultBase := 1.25
+    volLen := 80
+
+// --- 判定シビア度（Buy精度）の適用 ---
+// 厳しめ：ADX要求↑、出来高要求↑
+// 緩め：ADX要求↓、出来高要求↓
+float adxTh = 20.0
+float volMult = volMultBase
+
+if filterStr == "厳しめ"
+    adxTh := 25.0
+    volMult := volMultBase * 1.3
+else if filterStr == "緩め"
+    adxTh := 15.0
+    volMult := volMultBase * 0.8
+
+// --- インジケーター計算 ---
+// ADX関数
+f_adx(_len) =>
+    up = ta.change(high)
+    dn = -ta.change(low)
+    plusDM = (up > dn and up > 0) ? up : 0
+    minusDM = (dn > up and dn > 0) ? dn : 0
+    tr = ta.tr(true)
+    trRma = ta.rma(tr, _len)
+    pDI = trRma == 0 ? 0 : 100 * ta.rma(plusDM, _len) / trRma
+    mDI = trRma == 0 ? 0 : 100 * ta.rma(minusDM, _len) / trRma
+    dx = (pDI + mDI == 0) ? 0 : 100 * math.abs(pDI - mDI) / (pDI + mDI)
+    ta.rma(dx, _len)
+
+emaF = ta.ema(close, maFast)
+emaM = ta.ema(close, maMid)
+emaL = ta.ema(close, maLong)
+atr  = ta.atr(atrLen)
+adx  = f_adx(adxLen)
+volAvg = ta.sma(volume, volLen)
+
+// トレンド定義
+trendUp = emaF > emaM and emaM > emaL
+volOK   = volume > volAvg * volMult
+
+// MA描画
+plot(showMA ? emaL : na, "MA長期", color=color.new(color.gray, 50), linewidth=2)
+plot(showMA ? emaM : na, "MA中期", color=color.new(color.orange, 50), linewidth=1)
+
+// --- 波形認識ロジック ---
+ph = ta.pivothigh(high, 3, 3)
+lastSwingHigh = ta.valuewhen(not na(ph), ph, 0)
+
+// 第1波（初動）
+wave1_cond = trendUp and volOK and adx > adxTh and not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+var bool wave1Context = false
+var int wave1Bar = 0
+if wave1_cond
+    wave1Context := true
+    wave1Bar := bar_index
+else if bar_index - wave1Bar > 200 // 有効期限切れ
+    wave1Context := false
+
+// 第2波（押し目）
+pullbackOK = close > emaM and close < emaF // 調整中
+reboundOK  = ta.crossover(close, emaF) // 再浮上
+wave2_cond = wave1Context and trendUp and adx > adxTh * 0.9 and reboundOK
+
+var bool wave2Context = false
+var int wave2Bar = 0
+if wave2_cond
+    wave2Context := true
+    wave2Bar := bar_index
+else if bar_index - wave2Bar > 200
+    wave2Context := false
+
+// 第3波（再加速・ダイバージェンスなし）
+// ダイバージェンス簡易判定
+rsi = ta.rsi(close, 14)
+rsiPH = ta.pivothigh(rsi, 5, 5)
+bearDiv = false 
+if not na(rsiPH) and not na(ph)
+    if ph > ph[1] and rsiPH < rsiPH[1] // 価格切り上げ・RSI切り下げ
+        bearDiv := true
+
+reAccel = ta.crossover(close, lastSwingHigh)
+wave3_cond = (wave2Context or wave1Context) and trendUp and reAccel and not bearDiv and volOK
+
+// 暴落フィルタ（簡略化）
+crashFilter = (ta.highest(high, 60) - close) / ta.highest(high, 60) < 0.15 // 直近高値から15%以上落ちていないこと
+
+// 最終シグナル
+wave1 = wave1_cond and crashFilter
+wave2 = wave2_cond and crashFilter
+wave3 = wave3_cond and crashFilter
+
+// ==========================================
+// 💹 トレード管理 & 表示
+// ==========================================
+var bool  inTrade = false
+var float enPrice = na
+var float tp1Price = na
+var float tp2Price = na
+var float slPrice = na
+var string sigType = ""
+
+// エントリー処理
+if (wave1 or wave2 or wave3) and barstate.isconfirmed
+    inTrade := true
+    enPrice := close
+    sigType := wave1 ? "第1波" : wave2 ? "第2波" : "第3波"
+    
+    // 第3波は伸びしろが大きいのでTPを深く、SLを浅く
+    _tp1M = wave3 ? 1.6 : tp1Mult
+    _tp2M = wave3 ? 2.6 : tp2Mult
+    _slM  = wave3 ? 1.1 : slMult
+    
+    tp1Price := enPrice + atr * _tp1M
+    tp2Price := enPrice + atr * _tp2M
+    slPrice  := enPrice - atr * _slM
+
+// 決済判定
+hitTP1 = inTrade and high >= tp1Price
+hitTP2 = inTrade and high >= tp2Price
+hitSL  = inTrade and low <= slPrice
+
+// マーカー表示（エントリー）
+plotshape(wave1, "第1波", shape.labelup, location.belowbar, color.new(color.green, 20), size=size.small, text="Wave1", textcolor=color.white)
+plotshape(wave2, "第2波", shape.labelup, location.belowbar, color.new(color.teal, 20), size=size.small, text="Wave2", textcolor=color.white)
+plotshape(wave3, "第3波", shape.labelup, location.belowbar, color.new(color.lime, 10), size=size.small, text="Wave3", textcolor=color.black)
+
+// 修正箇所：ploticon → plotchar
+// 決済表示（TP/SL）
+plotchar(hitTP1, title="TP1", char="✅", location=location.abovebar, color=color.green, text="TP1", textcolor=color.green, size=size.tiny)
+plotchar(hitSL,  title="SL",  char="❌", location=location.abovebar, color=color.red,   text="SL", textcolor=color.red,   size=size.tiny)
+
+if hitTP2 or hitSL
+    inTrade := false
+    enPrice := na
+
+// ライン表示（showLinesがONのときのみ）
+var line l_tp1 = na, var line l_tp2 = na, var line l_sl = na
+if showLines and inTrade
+    line.delete(l_tp1), line.delete(l_tp2), line.delete(l_sl)
+    l_tp1 := line.new(bar_index, tp1Price, bar_index+5, tp1Price, color=color.green, style=line.style_dashed)
+    l_tp2 := line.new(bar_index, tp2Price, bar_index+5, tp2Price, color=color.green, style=line.style_dashed)
+    l_sl  := line.new(bar_index, slPrice,  bar_index+5, slPrice,  color=color.red,   style=line.style_solid, width=2)
+
+// ==========================================
+// 🖥 情報パネル (Table)
+// ==========================================
+var table statusTbl = table.new(position.top_right, 2, 6, bgcolor=bgColor, border_color=color.new(color.gray, 80), border_width=1, frame_color=color.new(color.gray, 80), frame_width=1)
+
+if showTable and barstate.islast
+    // ヘッダー
+    table.merge_cells(statusTbl, 0, 0, 1, 0)
+    table.cell(statusTbl, 0, 0, "WTP20 Monitor (" + selMode + ")", text_color=txtColor, text_size=lblSize, bgcolor=color.new(bgColor, 20))
+    
+    // データ行
+    c_trend = trendUp ? color.green : color.red
+    txt_trend = trendUp ? "上昇" : "下降/レンジ"
+    
+    table.cell(statusTbl, 0, 1, "トレンド", text_color=txtColor, text_size=lblSize)
+    table.cell(statusTbl, 1, 1, txt_trend, text_color=c_trend, text_size=lblSize)
+    
+    table.cell(statusTbl, 0, 2, "ADX(勢い)", text_color=txtColor, text_size=lblSize)
+    table.cell(statusTbl, 1, 2, str.tostring(adx, "#.##"), text_color=adx>adxTh ? color.yellow : txtColor, text_size=lblSize)
+    
+    table.cell(statusTbl, 0, 3, "判定シビア度", text_color=txtColor, text_size=lblSize)
+    table.cell(statusTbl, 1, 3, filterStr, text_color=txtColor, text_size=lblSize)
+    
+    // 現在のポジション情報
+    table.cell(statusTbl, 0, 4, "Active Signal", text_color=txtColor, text_size=lblSize)
+    table.cell(statusTbl, 1, 4, inTrade ? sigType : "待機中", text_color=inTrade ? color.lime : color.gray, text_size=lblSize)
+    
+    if inTrade
+        table.merge_cells(statusTbl, 0, 5, 1, 5)
+        infoTxt = "EP:" + str.tostring(enPrice, format.mintick) + "\nTP1:" + str.tostring(tp1Price, format.mintick) + " / SL:" + str.tostring(slPrice, format.mintick)
+        table.cell(statusTbl, 0, 5, infoTxt, text_color=txtColor, text_size=lblSize)
+
+// ==========================================
+// 🔔 アラート
+// ==========================================
+alertcondition(wave1, "第1波IN", "第1波エントリー")
+alertcondition(wave2, "第2波IN", "第2波エントリー")
+alertcondition(wave3, "第3波IN", "第3波エントリー")
