@@ -1,0 +1,88 @@
+//@version=5
+indicator("All Pattern Breakout (Diagonal & Horizontal)", overlay=true)
+
+// --- 設定グループ ---
+grp_diag = "斜めライン設定 (ウェッジ/三角形)"
+d_len_L = input.int(15, "斜め: 左側の期間", group=grp_diag)
+d_len_R = input.int(5,  "斜め: 右側の期間", group=grp_diag)
+
+grp_horz = "水平ライン設定 (ダブルボトム/カップ等)"
+h_len = input.int(20, "水平: 高値の強さ（期間）", group=grp_horz)
+// 水平線は「過去〇期間の最高値」を基準にします
+
+// ==========================================
+// 1. 斜めライン (Diagonal) のロジック
+// ==========================================
+d_ph = ta.pivothigh(high, d_len_L, d_len_R)
+
+// 座標変数の定義
+var int d_x1 = na, var float d_y1 = na
+var int d_x2 = na, var float d_y2 = na
+var line diagLine = na
+
+// 頂点更新
+if not na(d_ph)
+    d_x1 := d_x2, d_y1 := d_y2
+    d_x2 := bar_index - d_len_R, d_y2 := d_ph
+
+// ライン描画と計算
+line.delete(diagLine) // 常に最新のみ表示
+float diagPrice = na
+
+if not na(d_x1) and not na(d_x2)
+    // 傾きの計算
+    float slope = (d_y2 - d_y1) / (d_x2 - d_x1)
+    // 現在価格の算出
+    diagPrice := slope * (bar_index - d_x2) + d_y2
+    // 描画 (赤色)
+    diagLine := line.new(d_x1, d_y1, d_x2, d_y2, color=color.red, width=2, extend=extend.right)
+
+// 斜めブレイク判定
+bool diagBreak = false
+// ダマシ防止: 最新の頂点から離れすぎていない(100本以内)かつ、線を上抜けた
+if not na(diagPrice) and ta.crossover(close, diagPrice) and (bar_index - d_x2 < 100)
+    diagBreak := true
+
+// ==========================================
+// 2. 水平ライン (Horizontal) のロジック
+// ==========================================
+// 指定期間のピボットハイ（明確な山）を見つける
+h_ph = ta.pivothigh(high, h_len, h_len)
+
+var float horzLevel = na
+var int horzLoc = na
+var line horzLine = na
+
+// 新しい「強い高値」が出たら水平線を更新
+if not na(h_ph)
+    horzLevel := h_ph
+    horzLoc := bar_index - h_len
+
+// ライン描画 (常に水平に右へ伸ばす)
+line.delete(horzLine)
+if not na(horzLevel)
+    // 描画 (青色)
+    horzLine := line.new(horzLoc, horzLevel, bar_index + 10, horzLevel, color=color.blue, width=2)
+
+// 水平ブレイク判定
+bool horzBreak = false
+// 現在の価格が水平線を上抜け、かつその水平線が現在の足で作られたものではないこと
+if not na(horzLevel) and ta.crossover(close, horzLevel) and (bar_index > horzLoc + 1)
+    horzBreak := true
+
+// ==========================================
+// サイン表示とアラート
+// ==========================================
+
+// 斜めブレイク (赤)
+plotshape(diagBreak, title="Diagonal Buy", location=location.belowbar, color=color.red, style=shape.labelup, text="DIAG\nBUY", textcolor=color.white, size=size.small)
+
+// 水平ブレイク (青)
+plotshape(horzBreak, title="Horizontal Buy", location=location.belowbar, color=color.blue, style=shape.labelup, text="HORZ\nBUY", textcolor=color.white, size=size.small)
+
+// 同時発生 (激熱)
+plotshape(diagBreak and horzBreak, title="Double Break", location=location.belowbar, color=color.purple, style=shape.diamond, text="SUPER\nBUY", textcolor=color.white, size=size.small)
+
+// アラート設定
+alertcondition(diagBreak, title="Diagonal Breakout", message="斜めのトレンドラインをブレイクしました")
+alertcondition(horzBreak, title="Horizontal Breakout", message="水平のレジスタンスラインをブレイクしました")
