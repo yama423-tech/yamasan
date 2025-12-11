@@ -1,0 +1,57 @@
+//@version=5
+indicator("底値ハンター V2 (安全圏エントリー)", overlay=true, shorttitle="底値ハンターV2")
+
+// --- 設定値 ---
+bbLength = input.int(20, title="ボリンジャーバンド期間")
+bbMult = input.float(2.0, title="ボリンジャーバンド偏差(σ)")
+macdFast = input.int(12, title="MACD 短期")
+macdSlow = input.int(26, title="MACD 長期")
+macdSignal = input.int(9, title="MACD シグナル")
+rsiLength = input.int(14, title="RSI期間")
+lookback = input.int(15, title="底値判定期間(過去何本)")
+
+// --- 計算 ---
+// ボリンジャーバンド & MA
+[middle, upper, lower] = ta.bb(close, bbLength, bbMult) // middleは20SMAと同じ
+smaShort = ta.sma(close, 5) // 5日移動平均線（短期勢い用）
+
+// MACD
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// --- ロジック定義 ---
+
+// 1. 底値圏の記憶: 過去X本以内にバンド-2σ以下、またはRSI30以下があったか？
+// (暴落があったことを記憶しておく)
+wasOversold = false
+for i = 1 to lookback
+    if low[i] < lower[i] or rsi[i] < 30
+        wasOversold := true
+        break
+
+// 2. トレンド復帰: 
+// 終値が「5日線」かつ「ボリンジャーバンドのミドル(20日線)」付近まで戻しているか？
+// 安全圏＝ミドルバンドを超えた、あるいは超えようとしているところ
+trendRecovering = close > smaShort and close > middle
+
+// 3. 勢いの確認: MACDが好転しており、かつRSIが40以上（死に体ではない）
+momentumOk = macdLine > signalLine and rsi > 40
+
+// 4. 重複排除用（ずっと矢印が出ないように、直前の足では条件を満たしていなかったことを確認）
+trigger = trendRecovering and momentumOk and wasOversold
+buySignal = trigger and not trigger[1]
+
+// --- 描画 ---
+plotshape(buySignal, title="安全圏BUY", location=location.belowbar, color=color.yellow, style=shape.labelup, text="Safe\nBUY", textcolor=color.black, size=size.small)
+
+// 参考ライン表示
+plot(middle, "20 SMA (Mid Band)", color=color.orange, linewidth=2)
+plot(smaShort, "5 SMA", color=color.aqua)
+p1 = plot(upper, "Upper", color=color.new(color.red, 90))
+p2 = plot(lower, "Lower", color=color.new(color.blue, 90))
+fill(p1, p2, color=color.new(color.gray, 95))
+
+// アラート
+alertcondition(buySignal, title="安全圏BUY発動", message="底打ち確認後の安全圏シグナル！銘柄: {{ticker}}")
