@@ -1,0 +1,50 @@
+//@version=5
+indicator("底値ハンター (BB + MACD Reversal)", overlay=true, shorttitle="底値ハンター")
+
+// --- 設定値（パラメーター） ---
+bbLength = input.int(20, title="ボリンジャーバンド期間")
+bbMult = input.float(2.0, title="ボリンジャーバンド偏差(σ)")
+macdFast = input.int(12, title="MACD 短期")
+macdSlow = input.int(26, title="MACD 長期")
+macdSignal = input.int(9, title="MACD シグナル")
+lookback = input.int(10, title="下落判定期間(過去何本見るか)")
+
+// --- 計算ロジック ---
+
+// 1. ボリンジャーバンドの計算
+[middle, upper, lower] = ta.bb(close, bbLength, bbMult)
+
+// 2. MACDの計算
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// 3. 条件定義
+
+// 条件A: 「最近」ボリンジャーバンドの-2σにタッチしたか？（暴落・急落があったか）
+// ta.lowest(low, lookback) で過去X本の最安値を取得し、それがその時のバンドより下だったか判定
+wasOversold = false
+for i = 1 to lookback
+    if low[i] < lower[i]
+        wasOversold := true
+        break
+
+// 条件B: MACDがゴールデンクロスしたか？
+macdCrossover = ta.crossover(macdLine, signalLine)
+
+// 条件C: MACDがゼロラインより下か？（下降トレンド中の一時的な反発や底値を狙うため）
+isBelowZero = macdLine < 0
+
+// --- 最終シグナル判定 ---
+buySignal = wasOversold and macdCrossover and isBelowZero
+
+// --- 描画とアラート ---
+
+// チャート上に矢印を表示
+plotshape(buySignal, title="買いシグナル", location=location.belowbar, color=color.lime, style=shape.labelup, text="BUY", textcolor=color.white, size=size.small)
+
+// ボリンジャーバンドの表示（参考用）
+p1 = plot(upper, "Upper", color=color.new(color.red, 90))
+p2 = plot(lower, "Lower", color=color.new(color.blue, 90))
+fill(p1, p2, color=color.new(color.gray, 95))
+
+// アラート設定（右側の時計アイコンから設定可能になります）
+alertcondition(buySignal, title="底値ハンター発動", message="底値反転の兆しがあります！銘柄: {{ticker}} 価格: {{close}}")
