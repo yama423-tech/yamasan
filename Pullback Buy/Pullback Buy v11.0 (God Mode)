@@ -1,0 +1,158 @@
+//@version=5
+indicator("Pullback Buy v11.0 (God Mode)", overlay=true, scale=scale.right, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. 戦略・感度設定
+// ==========================================
+group_strat = "📊 戦略感度設定"
+sensitivity = input.string("Lv0: Sniper", "エントリー感度", options=["Lv0: Sniper", "Lv1: Super Safe", "Lv2: Ultra Safe", "Lv3: Safe", "Lv4: Normal"], group=group_strat)
+
+// パラメータマッピング（Lv0はさらに厳格化）
+var float s_zoneMult = na 
+var float s_slMult = na 
+var float s_tp1Mult = na
+var int   s_reqScore = na 
+
+if sensitivity == "Lv0: Sniper"
+    s_zoneMult := 2.5, s_slMult := 1.5, s_tp1Mult := 1.5, s_reqScore := 8 // 全8要素必須(ADX+Angle追加)
+else if sensitivity == "Lv1: Super Safe"
+    s_zoneMult := 2.0, s_slMult := 1.5, s_tp1Mult := 1.2, s_reqScore := 6
+else if sensitivity == "Lv2: Ultra Safe"
+    s_zoneMult := 1.8, s_slMult := 1.4, s_tp1Mult := 1.0, s_reqScore := 5
+else if sensitivity == "Lv3: Safe"
+    s_zoneMult := 1.5, s_slMult := 1.2, s_tp1Mult := 0.9, s_reqScore := 4
+else 
+    s_zoneMult := 1.2, s_slMult := 1.0, s_tp1Mult := 0.8, s_reqScore := 3
+
+atrLen = input.int(20, "ATR期間 (安定志向)", group=group_strat)
+
+// ==========================================
+// 2. 指標設定
+// ==========================================
+group_ind = "📈 厳選フィルタリング"
+weeklyEmaLen = input.int(52,  "週足 EMA", group=group_ind)
+dailyEmaLen  = input.int(200, "日足 EMA", group=group_ind)
+maLen        = input.int(200, "執行足 EMA (推奨:200)", group=group_ind)
+volLen       = input.int(20,  "出来高 SMA", group=group_ind)
+volTh        = input.float(2.0, "出来高急増倍率 (厳格)", step=0.1, group=group_ind)
+
+// 【NEW】勝率向上のための新フィルター
+useAdx       = input.bool(true, "ADXフィルタ (トレンド発生中のみ)", group=group_ind)
+adxTh        = input.int(25,    "ADXしきい値", group=group_ind)
+useAngle     = input.bool(true, "EMA角度フィルタ (上昇中のみ)", group=group_ind)
+
+// ==========================================
+// 3. データ処理
+// ==========================================
+float vwap_ = ta.vwap(hlc3)
+float atr   = ta.atr(atrLen)
+float rsi   = ta.rsi(close, 14)
+float ema   = ta.ema(close, maLen)
+
+// --- MACD ---
+[macdLine, signalLine, hist] = ta.macd(close, 12, 26, 9)
+bool macdBull = macdLine > signalLine
+
+// --- Volume ---
+float volMA = ta.sma(volume, volLen)
+bool volSpike = volume > volMA * volTh
+
+// --- 【NEW】ADX (トレンド強度) ---
+[diplus, diminus, adxVal] = ta.dmi(14, 14)
+bool cond_Adx = useAdx ? (adxVal > adxTh) : true
+
+// --- 【NEW】EMA Angle (角度判定) ---
+// 3本前より現在のEMAが高い＝上向き
+bool cond_Angle = useAngle ? (ema > ema[3]) : true
+
+// --- MTF Data ---
+float d_close = request.security(syminfo.tickerid, "D", close)
+float d_ema   = request.security(syminfo.tickerid, "D", ta.ema(close, dailyEmaLen))
+float d_rsi   = request.security(syminfo.tickerid, "D", ta.rsi(close, 14))
+float w_close = request.security(syminfo.tickerid, "W", close)
+float w_ema   = request.security(syminfo.tickerid, "W", ta.ema(close, weeklyEmaLen))
+
+// ==========================================
+// 4. 判定ロジック (8-Point Scoring)
+// ==========================================
+bool cond_TrendW = (w_close > w_ema)
+bool cond_TrendD = (d_close > d_ema) and (d_rsi < 80)
+bool cond_MA     = (close > ema)
+bool cond_MACD   = macdBull or (hist > hist[1] and hist < 0)
+bool cond_RSI    = (rsi >= 45 and rsi <= 70) // 範囲を少し狭めて精度向上
+bool cond_Vol    = volSpike
+
+// --- ゾーン計算 ---
+float zoneHi = vwap_ - atr * (s_zoneMult * 0.40) 
+float zoneLo = vwap_ - atr * (s_zoneMult)
+bool  inZone = (low <= zoneHi and high >= zoneLo)
+
+// --- トリガー ---
+bool candleBull = close > open
+bool triggerRaw = (ta.crossover(close, vwap_) or (inZone and candleBull))
+
+// --- スコアリング ---
+int score = 0
+string reasons = ""
+
+if cond_TrendW 
+    score += 1
+    reasons += "W-Trend "
+if cond_TrendD 
+    score += 1
+    reasons += "D-Trend "
+if cond_MA
+    score += 1
+    reasons += "MA "
+if cond_MACD
+    score += 1
+    reasons += "MACD "
+if cond_RSI
+    score += 1
+    reasons += "RSI "
+if cond_Vol
+    score += 1
+    reasons += "Vol "
+if cond_Adx        // 新要素
+    score += 1
+    reasons += "ADX "
+if cond_Angle      // 新要素
+    score += 1
+    reasons += "Angle "
+
+// --- 最終エントリー判定 ---
+// Lv0 Sniperは全要素(8点)必須
+bool strictTrend = (sensitivity == "Lv0: Sniper") ? (cond_TrendW and cond_TrendD and cond_Angle and cond_Adx) : true
+bool isEntry = triggerRaw and strictTrend and (score >= s_reqScore)
+
+// 連打防止
+var int lastEntry = na
+if isEntry and (not na(lastEntry) and bar_index - lastEntry < 5)
+    isEntry := false
+if isEntry
+    lastEntry := bar_index
+
+// TP/SL
+float stopLvl = close - atr * s_slMult
+float target1 = close + atr * s_tp1Mult
+
+// ==========================================
+// 5. 描画
+// ==========================================
+plot(vwap_, "VWAP", color=color.new(color.blue, 50))
+plot(ema,   "Exec EMA", color=color.new(color.orange, 30), linewidth=2)
+
+// Signal
+plotshape(isEntry, title="ENTRY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.large, text="GOD IN", textcolor=color.white)
+
+// Label (透ける背景)
+if isEntry
+    label_text = "⚡ GOD MODE\n" + reasons + "\nScore: " + str.tostring(score) + "/8"
+    label.new(bar_index, low - atr*1.5, label_text, style=label.style_label_up, color=color.new(color.green, 85), textcolor=color.new(color.white, 10), size=size.normal)
+
+// Lines
+if isEntry
+    line.new(bar_index, stopLvl, bar_index + 10, stopLvl, color=color.new(color.red, 30), style=line.style_dashed)
+    line.new(bar_index, target1, bar_index + 10, target1, color=color.new(color.blue, 30), style=line.style_dotted)
+
+alertcondition(isEntry, "Entry Signal", "God Mode Entry")
