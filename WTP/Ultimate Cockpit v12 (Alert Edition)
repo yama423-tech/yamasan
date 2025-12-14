@@ -1,0 +1,236 @@
+//@version=5
+strategy("Ultimate Cockpit v12 (Alert Edition)", overlay=true, initial_capital=1000000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.JPY, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. 設定：モード & 期間 & 感度
+// ==========================================
+tradeMode = input.string("スイング (Swing)", "トレードスタイル", options=["短期 (Short)", "スイング (Swing)", "中期 (Medium)", "長期 (Long)"], group="基本戦略")
+sensitivity = input.string("Lv3: 普通", "エントリー感度", options=["Lv1: 激甘", "Lv2: 甘い", "Lv3: 普通", "Lv4: 厳しい", "Lv5: 激辛", "Lv6: 鬼"], group="基本戦略")
+
+// TP設定（2段階）
+tp1Ratio = input.float(1.5, "TP1 リスクリワード比 (50%利確)", step=0.1, group="決済設定")
+tp2Ratio = input.float(3.0, "TP2 リスクリワード比 (全決済)", step=0.1, group="決済設定")
+
+// 期間設定
+useDateFilter = input.bool(true, "期間指定を使う", group="期間設定")
+startDate = input.time(timestamp("2023-01-01 00:00"), "開始日時", group="期間設定")
+
+// パラメータ調整
+var int maShortLen = 20
+var int maLongLen  = 50
+var int maTrendLen = 200
+var float slMult   = 1.5
+
+if tradeMode == "短期 (Short)"
+    maShortLen := 5, maLongLen := 20, maTrendLen := 75, slMult := 1.2
+else if tradeMode == "スイング (Swing)"
+    maShortLen := 20, maLongLen := 50, maTrendLen := 200, slMult := 1.5
+else if tradeMode == "中期 (Medium)"
+    maShortLen := 50, maLongLen := 100, maTrendLen := 200, slMult := 2.0
+else 
+    maShortLen := 75, maLongLen := 200, maTrendLen := 200, slMult := 2.5
+
+// 感度微調整
+var float senseMult = 1.0
+var int rsiUpper = 70
+var int rsiLower = 30
+if sensitivity == "Lv1: 激甘"
+    senseMult := 0.8, rsiUpper := 80, rsiLower := 20
+else if sensitivity == "Lv2: 甘い"
+    senseMult := 0.9, rsiUpper := 75, rsiLower := 25
+else if sensitivity == "Lv3: 普通"
+    senseMult := 1.0, rsiUpper := 70, rsiLower := 30
+else if sensitivity == "Lv4: 厳しい"
+    senseMult := 1.1, rsiUpper := 65, rsiLower := 35
+else if sensitivity == "Lv5: 激辛"
+    senseMult := 1.2, rsiUpper := 60, rsiLower := 40
+else 
+    senseMult := 1.5, rsiUpper := 60, rsiLower := 45
+
+// ==========================================
+// 2. 指標計算
+// ==========================================
+c_gold = #FFD700
+c_lime = color.lime
+c_red  = color.red
+c_orange = color.orange
+c_white = color.white
+c_gray = color.gray
+c_bg_panel = color.new(color.black, 60)
+c_header = color.new(color.navy, 30)
+
+// Indicators
+atr = ta.atr(14)
+rsi = ta.rsi(close, 14)
+vwap_ = ta.vwap(hlc3)
+maShort = ta.ema(close, maShortLen)
+maTrend = ta.ema(close, maTrendLen)
+
+// MACD
+[macdLine, sigLine, macdHist] = ta.macd(close, 12, 26, 9)
+bool macdBull = macdLine > sigLine
+
+// Daily Data
+d_close = request.security(syminfo.tickerid, "D", close)
+d_ma20  = request.security(syminfo.tickerid, "D", ta.sma(close, 20))
+d_ma50  = request.security(syminfo.tickerid, "D", ta.sma(close, 50))
+bool dailyBull = (d_close > d_ma20) and (d_ma20 > d_ma50)
+
+// ADX
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+string trendDir = adx < 20 ? "レンジ ➡" : (diPlus > diMinus ? "上昇 ↗" : "下降 ↘")
+color trendCol = adx < 20 ? c_gray : (diPlus > diMinus ? c_lime : c_red)
+
+// Volume Ratio
+volMA = ta.sma(volume, 20)
+float volRatio = volMA > 0 ? (volume / volMA) : 0.0
+bool volOK = volRatio > senseMult
+
+// Breakout & BandWalk
+high20 = ta.highest(high[1], 20)
+bool isBreak = close > high20
+[bbMid, bbUp, bbLow] = ta.bb(close, 20, 2.0)
+bool isBandWalk = close > bbUp
+
+// Status Judgment
+bool isOverheat = rsi > rsiUpper
+string statusMsg = "待機中"
+color statusCol = c_gray
+if strategy.position_size > 0
+    statusMsg := "保有中"
+    statusCol := c_lime
+else if isOverheat
+    statusMsg := "加熱警戒"
+    statusCol := c_red
+else if isBreak
+    statusMsg := "ブレイク監視"
+    statusCol := c_orange
+
+// ==========================================
+// 3. エントリー & アラートロジック
+// ==========================================
+bool f_trend = close > maTrend 
+bool f_vwap  = close > vwap_
+bool f_rsi   = rsi > rsiLower and rsi < rsiUpper
+bool trig_brk = isBreak and volOK
+bool trig_gc  = ta.crossover(maShort, ta.ema(close, maLongLen))
+
+// Dual Buy条件
+bool longCondition = (trig_brk or trig_gc) and f_trend and f_vwap and f_rsi and dailyBull and macdBull
+
+inDateRange = not useDateFilter or time >= startDate
+
+// ★エントリー実行（アラートメッセージ付き）
+if longCondition and inDateRange
+    strategy.entry("DualBuy", strategy.long, comment="DualBuy", alert_message="【DUAL BUY】買いシグナル発生！価格: " + str.tostring(close))
+
+// TP/SL 計算
+float entryPrice = strategy.position_avg_price
+float stopDist = atr * slMult * senseMult
+float tp1Price = entryPrice + (stopDist * tp1Ratio)
+float tp2Price = entryPrice + (stopDist * tp2Ratio)
+float stopPrice = entryPrice - stopDist
+
+// ★決済実行（TP1, TP2, SL アラート付き）
+if strategy.position_size > 0
+    // TP1: 50% 利確
+    strategy.exit("TP1", "DualBuy", qty_percent=50, limit=tp1Price, stop=stopPrice, comment_profit="TP1", comment_loss="SL", alert_profit="【TP1達成】50%利確しました", alert_loss="【SL損切】ストップロスにかかりました")
+    
+    // TP2: 残り全決済
+    strategy.exit("TP2", "DualBuy", limit=tp2Price, stop=stopPrice, comment_profit="TP2", comment_loss="SL", alert_profit="【TP2達成】全決済・利確しました", alert_loss="【SL損切】ストップロスにかかりました")
+
+// TP/SL Lines (Visual)
+var line l_tp1 = na
+var line l_tp2 = na
+var line l_sl  = na
+
+if strategy.position_size > 0
+    if strategy.position_size[1] == 0
+        l_tp1 := line.new(bar_index, tp1Price, bar_index, tp1Price, color=color.new(c_gold, 30), style=line.style_dashed, width=1)
+        l_tp2 := line.new(bar_index, tp2Price, bar_index, tp2Price, color=c_gold, style=line.style_solid, width=2)
+        l_sl  := line.new(bar_index, stopPrice, bar_index, stopPrice, color=c_red, style=line.style_solid, width=2)
+    else
+        line.set_x2(l_tp1, bar_index)
+        line.set_x2(l_tp2, bar_index)
+        line.set_x2(l_sl, bar_index)
+else
+    l_tp1 := na
+    l_tp2 := na
+    l_sl  := na
+
+// ==========================================
+// 4. ビジュアル & ダッシュボード
+// ==========================================
+plotshape(longCondition and inDateRange, "Dual Buy", shape.labelup, location.belowbar, color=color.new(#76ff03, 20), text="DUAL\nBUY", textcolor=color.black, size=size.small)
+plotchar(isBandWalk, "BandWalk", "▲", location.abovebar, color=c_orange, size=size.tiny)
+
+chk(cond) => cond ? "✅" : "❌"
+
+// --- A. WTP Monitor (右上) ---
+var table wtp = table.new(position.top_right, 2, 11, bgcolor=c_bg_panel, frame_width=1, frame_color=c_gray)
+if barstate.islast
+    // Header
+    table.cell(wtp, 0, 0, "WTP Monitor v12", bgcolor=c_header, text_color=c_white, text_size=size.small)
+    table.merge_cells(wtp, 0, 0, 1, 0)
+
+    // Status
+    table.cell(wtp, 0, 1, "Status", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 1, statusMsg, bgcolor=c_bg_panel, text_color=statusCol, text_size=size.small)
+    
+    // Mode
+    table.cell(wtp, 0, 2, "Mode", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 2, tradeMode, bgcolor=c_bg_panel, text_color=c_white, text_size=size.small)
+
+    // Daily Trend
+    table.cell(wtp, 0, 3, "日足Trend", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 3, chk(dailyBull), bgcolor=c_bg_panel, text_color=(dailyBull ? c_lime : c_red), text_size=size.small)
+
+    // ADX
+    table.cell(wtp, 0, 4, "ADX (勢い)", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 4, str.tostring(adx, "#.0") + " " + trendDir, bgcolor=c_bg_panel, text_color=trendCol, text_size=size.small)
+
+    // RSI
+    table.cell(wtp, 0, 5, "RSI", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 5, str.tostring(rsi, "#.0"), bgcolor=c_bg_panel, text_color=(isOverheat ? c_red : c_white), text_size=size.small)
+
+    // Vol Ratio
+    table.cell(wtp, 0, 6, "Vol倍率", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    string volTxt = str.tostring(volRatio, "#.2") + "x"
+    table.cell(wtp, 1, 6, volTxt, bgcolor=c_bg_panel, text_color=(volOK ? c_lime : c_gray), text_size=size.small)
+
+    // MACD
+    table.cell(wtp, 0, 7, "MACD", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 7, chk(macdBull), bgcolor=c_bg_panel, text_color=(macdBull ? c_lime : c_red), text_size=size.small)
+
+    // Breakout
+    table.cell(wtp, 0, 8, "Breakout", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 8, chk(isBreak), bgcolor=c_bg_panel, text_color=(isBreak ? c_lime : c_gray), text_size=size.small)
+
+    // BandWalk
+    table.cell(wtp, 0, 9, "BandWalk", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 9, chk(isBandWalk), bgcolor=c_bg_panel, text_color=(isBandWalk ? c_orange : c_gray), text_size=size.small)
+
+    // VWAP
+    table.cell(wtp, 0, 10, "VWAP判定", bgcolor=c_bg_panel, text_color=c_gray, text_size=size.small)
+    table.cell(wtp, 1, 10, chk(f_vwap), bgcolor=c_bg_panel, text_color=(f_vwap ? c_lime : c_red), text_size=size.small)
+
+// --- B. 戦略評価ラベル (右下) ---
+var table stats = table.new(position.bottom_right, 5, 2, bgcolor=c_bg_panel, frame_width=1, frame_color=c_gray)
+if barstate.islast
+    float currentPnl = strategy.netprofit
+    int trades = strategy.closedtrades
+    float winRate = trades > 0 ? (strategy.wintrades / trades * 100) : 0
+    float pf = strategy.grossloss != 0 ? (strategy.grossprofit / strategy.grossloss) : 99.9
+
+    c_h = c_header
+    table.cell(stats, 0, 0, "戦略評価", bgcolor=c_h, text_color=c_white, text_size=size.small)
+    table.cell(stats, 1, 0, "トレード数", bgcolor=c_h, text_color=c_white, text_size=size.small)
+    table.cell(stats, 2, 0, "勝率", bgcolor=c_h, text_color=c_white, text_size=size.small)
+    table.cell(stats, 3, 0, "PF", bgcolor=c_h, text_color=c_white, text_size=size.small)
+    table.cell(stats, 4, 0, "純損益", bgcolor=c_h, text_color=c_white, text_size=size.small)
+
+    table.cell(stats, 0, 1, "RESULT", bgcolor=color.navy, text_color=c_white, text_size=size.small)
+    table.cell(stats, 1, 1, str.tostring(trades), bgcolor=c_bg_panel, text_color=c_white, text_size=size.small)
+    table.cell(stats, 2, 1, str.tostring(winRate, "#.1") + "%", bgcolor=c_bg_panel, text_color=(winRate >= 50 ? c_lime : c_red), text_size=size.small)
+    table.cell(stats, 3, 1, str.tostring(pf, "#.2"), bgcolor=c_bg_panel, text_color=(pf >= 1.0 ? c_gold : c_gray), text_size=size.small)
+    table.cell(stats, 4, 1, str.tostring(currentPnl, "#"), bgcolor=c_bg_panel, text_color=(currentPnl >= 0 ? c_lime : c_red), text_size=size.small)
