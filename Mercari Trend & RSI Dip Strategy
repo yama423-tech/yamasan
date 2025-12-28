@@ -1,0 +1,39 @@
+//@version=5
+indicator("Mercari Trend & RSI Dip Strategy", overlay=true)
+
+// --- パラメータ ---
+rsi_len = input.int(14, "RSI期間")
+rsi_ob_threshold = input.int(70, "RSI過熱ライン（ここから落ちてくるのを待つ）")
+rsi_reentry_level = input.int(60, "RSI押し目目安（この付近で反発）")
+
+// --- 定義 ---
+rsi = ta.rsi(close, rsi_len)
+
+// 一目均衡表の取得
+tenkan_len = 9
+donchian(len) => math.avg(ta.lowest(len), ta.highest(len))
+tenkan = donchian(tenkan_len)
+
+// --- ロジック ---
+// 1. トレンド判定：価格が転換線より上、または転換線付近にある（強い上昇トレンド）
+is_trend_up = close > tenkan * 0.98 // 転換線の少し下まで許容
+
+// 2. RSIの状態：
+// 直近10本以内に一度70を超えていた（過熱していた）
+was_overbought = ta.highest(rsi, 10) > rsi_ob_threshold
+
+// 現在は70を下回っているが、ある程度高い位置（50以上）にいる
+is_dip = rsi < rsi_ob_threshold and rsi > 50
+
+// 3. トリガー：RSIが前のバーより上昇した（反発確認）
+rsi_hook_up = rsi > rsi[1] + 2 // 少し明確な反発を要求
+
+// 買いサイン
+buy_signal = is_trend_up and was_overbought and is_dip and rsi_hook_up
+
+// --- 描画 ---
+plot(tenkan, color=color.blue, title="転換線")
+plotshape(buy_signal, style=shape.labelup, location=location.belowbar, color=color.lime, text="RSI DIP", textcolor=color.black, size=size.small)
+
+// アラート
+alertcondition(buy_signal, title="RSI押し目反発", message="RSIが調整から再上昇を開始しました")
