@@ -1,0 +1,53 @@
+//@version=5
+indicator("Resonac Dip Detector (Ichimoku MTF)", overlay=true)
+
+// --- パラメータ設定 ---
+tenkan_len = input.int(9, "転換線期間")
+kijun_len  = input.int(26, "基準線期間")
+span_b_len = input.int(52, "先行スパンB期間")
+rsi_len    = input.int(14, "RSI期間")
+rsi_upper  = input.int(75, "RSI過熱水準")
+rsi_pullback = input.int(65, "RSI押し目目安")
+
+// --- 一目均衡表の計算 ---
+donchian(len) => math.avg(ta.lowest(len), ta.highest(len))
+
+tenkan = donchian(tenkan_len)
+kijun  = donchian(kijun_len)
+span_a = math.avg(tenkan, kijun)
+span_b = donchian(span_b_len)
+
+// --- 週足の状態を別時間軸から取得 (MTF) ---
+// 週足で雲の上にいるかを確認
+w_close = request.security(syminfo.tickerid, "W", close)
+w_span_a = request.security(syminfo.tickerid, "W", span_a[26])
+w_span_b = request.security(syminfo.tickerid, "W", span_b[26])
+is_weekly_bullish = w_close > math.max(w_span_a, w_span_b)
+
+// --- 押し目検知ロジック ---
+rsi_val = ta.rsi(close, rsi_len)
+// 1. 直近でRSIが過熱(75超)した後に、少し冷めた(65以下)状態
+rsi_cooled = ta.highest(rsi_val, 10) > rsi_upper and rsi_val < rsi_pullback
+
+// 2. 価格が転換線または基準線に接近 (1.5%以内)
+near_tenkan = math.abs(close - tenkan) / tenkan < 0.015
+near_kijun  = math.abs(close - kijun) / kijun < 0.015
+
+// 3. 総合的な買い条件
+// 週足が強気 ＋ RSIが過熱から冷めた ＋ 転換線または基準線にタッチ
+buy_signal = is_weekly_bullish and rsi_cooled and (near_tenkan or near_kijun)
+
+// --- 描画設定 ---
+plot(tenkan, color=color.blue, title="転換線")
+plot(kijun, color=color.red, title="基準線")
+p1 = plot(span_a, offset = 26, color=color.green, title="先行スパンA", display=display.none)
+p2 = plot(span_b, offset = 26, color=color.red, title="先行スパンB", display=display.none)
+fill(p1, p2, color = span_a > span_b ? color.new(color.green, 90) : color.new(color.red, 90))
+
+// サインの表示
+plotshape(buy_signal, style=shape.labelup, location=location.belowbar, color=color.yellow, size=size.small, text="BUY DIP", textcolor=color.black)
+bgcolor(buy_signal ? color.new(color.yellow, 85) : na)
+
+// アラート設定
+alertcondition(buy_signal, title="レゾナック押し目アラート", message="転換線/基準線付近での押し目検知！")
+使い方のコツ
