@@ -1,0 +1,35 @@
+//@version=5
+indicator("Sansan Safe Dip Hunter (Trend-Aligned)", overlay=true)
+
+// --- パラメータ設定 ---
+sma_len = input.int(75, "中期トレンド線 (SMA75)")
+rsi_len = input.int(14, "RSI期間")
+rsi_dip = input.int(45, "RSI押し目水準")
+
+// --- 計算 ---
+sma75 = ta.sma(close, sma_len)
+rsi   = ta.rsi(close, rsi_len)
+
+// --- 【重要】トレンドフィルターの強化 ---
+// 1. 75日線が上向き（直近5日間の平均より高い）
+is_moving_average_up = sma75 > ta.sma(sma75, 5)
+// 2. 株価が75日線より「上」にいる（下にある時は絶対買わない）
+is_above_ma = close > sma75
+
+// --- 押し目条件 ---
+// 価格が75日線に接近（上から降りてきた）
+near_ma = close < (sma75 * 1.05) 
+// RSIが冷え込んでいる
+rsi_cooled = rsi < rsi_dip
+// 反発の予兆（前日の高値を超えそう、または陽線）
+is_rebound = close > open
+
+// 最終的な「安全な」買いサイン
+safe_buy_signal = is_moving_average_up and is_above_ma and near_ma and rsi_cooled and is_rebound
+
+// --- 描画 ---
+plot(sma75, color=is_moving_average_up ? color.orange : color.gray, linewidth=2, title="75日線（上向き時オレンジ）")
+plotshape(safe_buy_signal, style=shape.labelup, location=location.belowbar, color=color.red, text="SAFE DIP", textcolor=color.white, size=size.small)
+
+// アラート
+alertcondition(safe_buy_signal, title="Sansan安全押し目", message="上昇トレンド中の健全な調整を検知！")
