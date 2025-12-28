@@ -1,0 +1,38 @@
+//@version=5
+indicator("Sansan Deep Dip Hunter (75SMA)", overlay=true)
+
+// --- パラメータ設定 ---
+sma_long_len = input.int(75, "中期トレンド線 (SMA75)")
+rsi_len      = input.int(14, "RSI期間")
+rsi_dip      = input.int(45, "RSI押し目水準 (SaaSは40-45で反発しやすい)")
+trend_filter = input.bool(true, "75日線の上向きを条件にする")
+
+// --- 計算 ---
+sma_long = ta.sma(close, sma_long_len)
+rsi      = ta.rsi(close, rsi_len)
+
+// トレンド判定（75日線が前のバーより高い ＝ 上昇トレンド）
+is_trend_up = trend_filter ? (sma_long > sma_long[1]) : true
+
+// --- 買い条件 (Deep Dip) ---
+// 1. 株価が75日線付近まで落ちてきた (価格がSMA75の+3%以内、または割り込んでいる)
+//    ただし、暴落回避のため、SMA75の-5%以上であること（底なし沼は避ける）
+price_near_sma = close < (sma_long * 1.03) and close > (sma_long * 0.95)
+
+// 2. RSIが冷え込んでいる (しかし売られすぎ30までは行かないことが多い)
+rsi_cooled = rsi < rsi_dip
+
+// 3. 陽線が出現 (反発の兆し)
+is_bullish_candle = close > open
+
+// 総合シグナル
+buy_signal = is_trend_up and price_near_sma and rsi_cooled and is_bullish_candle
+
+// --- 描画 ---
+plot(sma_long, color=color.orange, linewidth=2, title="SMA 75 (生命線)")
+
+// サイン表示
+plotshape(buy_signal, style=shape.labelup, location=location.belowbar, color=color.red, text="SaaS DIP", textcolor=color.white, size=size.small)
+
+// アラート
+alertcondition(buy_signal, title="Sansan押し目アラート", message="75日線付近での反発を確認！エントリー検討")
