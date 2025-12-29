@@ -1,0 +1,113 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © LuxAlgo
+
+//@version=5
+indicator('LuxAlgo - SMC (Swing/Large/Alert)', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+//---------------------------------------------------------------------------------------------------------------------{
+// 文字サイズと定数の定義
+//---------------------------------------------------------------------------------------------------------------------{
+TINY   = size.normal
+SMALL  = size.large
+NORMAL = size.huge // 特大サイズ
+
+BULLISH = 1, BEARISH = -1
+GREEN = #089981, RED = #F23645
+
+//---------------------------------------------------------------------------------------------------------------------{
+// 設定（Inputs）
+//---------------------------------------------------------------------------------------------------------------------{
+swingsLengthInput  = input.int(50, 'スイング検知感度', minval = 10, group = 'スイング構造')
+swingStructureSize = input.string(NORMAL, '文字サイズ', options = [TINY, SMALL, NORMAL], group = 'スイング構造')
+showSwingOBInput   = input(true, 'スイングOB（ボックス）を表示', group = 'オーダーブロック')
+obSizeInput        = input.int(5, '表示数', minval = 1, maxval = 10, group = 'オーダーブロック')
+
+//---------------------------------------------------------------------------------------------------------------------{
+// ロジック実行部
+//---------------------------------------------------------------------------------------------------------------------{
+type pivot
+    float currentLevel = na
+    float lastLevel = na
+    bool crossed = false
+    int barTime = na
+
+type orderBlock
+    float barHigh
+    float barLow
+    int barTime
+    int bias
+
+var swingHigh = pivot.new()
+var swingLow  = pivot.new()
+var trendBias = 0 // 1: Bullish, -1: Bearish
+var array<orderBlock> obArray = array.new<orderBlock>()
+var array<box> obBoxes = array.new<box>()
+
+// アラート用フラグ
+var bool alertBOS   = false
+var bool alertCHoCH = false
+var bool alertOB    = false
+alertBOS := false, alertCHoCH := false, alertOB := false
+
+// OBボックス初期化
+if barstate.isfirst and showSwingOBInput
+    for i = 1 to obSizeInput
+        obBoxes.push(box.new(na, na, na, na, xloc = xloc.bar_time, extend = extend.right))
+
+// スイングポイント検知
+highPivot = ta.pivothigh(high, swingsLengthInput, swingsLengthInput)
+lowPivot  = ta.pivotlow(low, swingsLengthInput, swingsLengthInput)
+
+if not na(highPivot)
+    swingHigh.lastLevel := swingHigh.currentLevel, swingHigh.currentLevel := highPivot
+    swingHigh.crossed := false, swingHigh.barTime := time[swingsLengthInput]
+
+if not na(lowPivot)
+    swingLow.lastLevel := swingLow.currentLevel, swingLow.currentLevel := lowPivot
+    swingLow.crossed := false, swingLow.barTime := time[swingsLengthInput]
+
+// BOS / CHoCH 判定とアラートトリガー
+if not na(swingHigh.currentLevel)
+    if ta.crossover(close, swingHigh.currentLevel) and not swingHigh.crossed
+        swingHigh.crossed := true
+        labelTag = trendBias == BEARISH ? "CHoCH" : "BOS"
+        if trendBias == BEARISH 
+            alertCHoCH := true
+        else
+            alertBOS := true
+        trendBias := BULLISH
+        label.new(bar_index, high, labelTag, color=color.new(GREEN, 100), textcolor=GREEN, style=label.style_label_down, size=swingStructureSize)
+        obArray.unshift(orderBlock.new(high[swingsLengthInput], low[swingsLengthInput], time[swingsLengthInput], BULLISH))
+
+    if ta.crossunder(close, swingLow.currentLevel) and not swingLow.crossed
+        swingLow.crossed := true
+        labelTag = trendBias == BULLISH ? "CHoCH" : "BOS"
+        if trendBias == BULLISH
+            alertCHoCH := true
+        else
+            alertBOS := true
+        trendBias := BEARISH
+        label.new(bar_index, low, labelTag, color=color.new(RED, 100), textcolor=RED, style=label.style_label_up, size=swingStructureSize)
+        obArray.unshift(orderBlock.new(high[swingsLengthInput], low[swingsLengthInput], time[swingsLengthInput], BEARISH))
+
+// OB接触判定アラート
+if obArray.size() > 0
+    lastOB = obArray.get(0)
+    if (trendBias == BEARISH and ta.crossover(high, lastOB.barLow)) or (trendBias == BULLISH and ta.crossunder(low, lastOB.barHigh))
+        alertOB := true
+
+// OBボックス描画更新
+if showSwingOBInput and barstate.islast
+    for i = 0 to math.min(obArray.size(), obSizeInput) - 1
+        ob = obArray.get(i), bx = obBoxes.get(i)
+        box.set_top_left_point(bx, chart.point.new(ob.barTime, na, ob.barHigh))
+        box.set_bottom_right_point(bx, chart.point.new(time, na, ob.barLow))
+        box.set_bgcolor(bx, ob.bias == BULLISH ? color.new(GREEN, 85) : color.new(RED, 85))
+        box.set_border_color(bx, ob.bias == BULLISH ? GREEN : RED)
+
+//---------------------------------------------------------------------------------------------------------------------{
+// アラート設定（Alertcondition）
+//---------------------------------------------------------------------------------------------------------------------{
+alertcondition(alertBOS,   title="BOS発生（トレンド継続）", message="スイング構造が破壊されました。トレンド継続の可能性があります。")
+alertcondition(alertCHoCH, title="CHoCH発生（トレンド転換）", message="スイング構造が転換しました。逆方向への動きに注意してください。")
+alertcondition(alertOB,    title="オーダーブロック到達", message="価格が重要なオーダーブロック（反発ゾーン）に到達しました。")
