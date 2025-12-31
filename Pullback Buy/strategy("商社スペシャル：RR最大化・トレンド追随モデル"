@@ -1,0 +1,61 @@
+//@version=6
+strategy("商社スペシャル：RR最大化・トレンド追随モデル", overlay=true, initial_capital=1000000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.JPY)
+
+// -----------------------------------------------------------------------------
+// 1. パラメータ設定
+// -----------------------------------------------------------------------------
+// トレンド判定
+ma_len = input.int(100, "長期トレンドMA（商社は100推奨）", group="トレンドフィルター")
+st_mul = input.float(3.0, "SuperTrend倍率", group="トレンドフィルター")
+st_len = input.int(10, "SuperTrend期間", group="トレンドフィルター")
+
+// エントリー条件（RSI）
+rsi_len = input.int(14, "RSI期間", group="エントリー条件")
+rsi_buy = input.int(48, "買いゾーン (RSI下限：商社は48付近推奨)", group="エントリー条件")
+
+// 需給フィルター
+use_jyu_kyu = input.bool(true, "需給フィルターを使う", group="需給/リスク管理")
+margin_ratio = input.float(3.5, "許容信用倍率（これ以上は買わない）", group="需給/リスク管理")
+current_ratio = input.float(1.5, "現在の信用倍率（週報から入力）", group="需給/リスク管理")
+
+// リスク管理（損切り）
+atr_len = input.int(14, "ATR期間", group="需給/リスク管理")
+sl_mul = input.float(1.8, "損切り (ATR倍率)", group="需給/リスク管理")
+
+// -----------------------------------------------------------------------------
+// 2. 指標計算
+// -----------------------------------------------------------------------------
+ma_filter = ta.sma(close, ma_len)
+[supertrend, direction] = ta.supertrend(st_mul, st_len)
+rsi = ta.rsi(close, rsi_len)
+atr = ta.atr(atr_len)
+
+// -----------------------------------------------------------------------------
+// 3. エントリー論理
+// -----------------------------------------------------------------------------
+jyu_kyu_ok = not use_jyu_kyu or (current_ratio < margin_ratio)
+long_condition = close > ma_filter and direction == -1 and rsi < rsi_buy and jyu_kyu_ok
+
+// -----------------------------------------------------------------------------
+// 4. 注文執行と決済ロジック（ここを大きく改良）
+// -----------------------------------------------------------------------------
+// エントリー
+if (long_condition)
+    strategy.entry("Long_Trend", strategy.long)
+
+// A. 損切り（SL）: 買値からATRの指定倍率下がったら決済
+strategy.exit("SL", "Long_Trend", stop=strategy.position_avg_price - atr * sl_mul, comment="Stop Loss")
+
+// B. 利確（TP）: トレンド終了決済
+// ポジション保有中、かつSuperTrendが赤(1)に変わったら成行で決済
+if (strategy.position_size > 0 and direction == 1)
+    strategy.close("Long_Trend", comment="Trend End Exit")
+
+// -----------------------------------------------------------------------------
+// 5. 視覚化
+// -----------------------------------------------------------------------------
+plot(ma_filter, color=color.new(color.blue, 50), linewidth=2, title="Trend Filter (MA)")
+plot(supertrend, color=direction == -1 ? color.green : color.red, linewidth=2, title="SuperTrend Line")
+
+// 背景色でトレンドを可視化（緑：上昇中、赤：下降中）
+bgcolor(direction == -1 ? color.new(color.green, 90) : color.new(color.red, 90))
