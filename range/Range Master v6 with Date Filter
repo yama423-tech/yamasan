@@ -1,0 +1,42 @@
+//@version=6
+strategy("Range Master v6 with Date Filter", overlay=true, initial_capital=1000000, calc_on_every_tick=true)
+
+// --- 1. バックテスト期間の設定 (数字を変えるだけの部分) ---
+group_date = "バックテスト期間"
+startYear  = input.int(2023, "開始年", group=group_date)
+startMonth = input.int(1,    "開始月", minval=1, maxval=12, group=group_date)
+startDay   = input.int(1,    "開始日", minval=1, maxval=31, group=group_date)
+
+endYear    = input.int(2025, "終了年", group=group_date)
+endMonth   = input.int(12,   "終了月", minval=1, maxval=12, group=group_date)
+endDay     = input.int(31,   "終了日", minval=1, maxval=31, group=group_date)
+
+// 期間の論理式
+inDateRange = time >= timestamp(startYear, startMonth, startDay, 00, 00) and 
+              time <= timestamp(endYear, endMonth, endDay, 23, 59)
+
+// --- 2. 既存のロジック ---
+bbLength = input.int(20, "BB期間")
+bbMult   = input.float(2.0, "BB偏差")
+rsiLen   = input.int(14, "RSI期間")
+[basis, upper, lower] = ta.bb(close, bbLength, bbMult)
+rsi = ta.rsi(close, rsiLen)
+
+// --- 3. エントリー・決済実行（期間判定を追加） ---
+// エントリー条件に「inDateRange」を追加
+longCondition = inDateRange and (close <= lower and rsi < 30)
+if (longCondition)
+    strategy.entry("Long", strategy.long, comment="期間内エントリー")
+
+// 決済（期間外になったら全決済する設定も可能ですが、基本はターゲット到達で）
+if (close >= upper or rsi > 70)
+    strategy.close("Long", comment="利確")
+
+// 期間外になったら強制クローズしたい場合は以下を有効化
+if (not inDateRange)
+    strategy.close_all(comment="期間終了")
+
+// --- 4. ビジュアル表示 ---
+plot(upper, color=color.red)
+plot(lower, color=color.green)
+bgcolor(inDateRange ? color.new(color.green, 95) : color.new(color.red, 95))
