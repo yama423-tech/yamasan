@@ -1,0 +1,85 @@
+//@version=6
+strategy("商社スペシャル：プロ（乖離フィルター＆全アラート）", overlay=true, initial_capital=1000000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.JPY)
+
+// ----------------------------------------------------------
+// 1. パラメータ
+// ----------------------------------------------------------
+strat_mode   = input.string("トレンド追随", "戦略モード", options=["トレンド追随", "固定TP/SL", "ブレイクアウト"], group="メイン戦略")
+max_deviation = input.float(10.0, "許容乖離率 (%)：これ以上でっぱると買わない", group="メイン戦略")
+
+curr_margin  = input.float(1.5, "現在の信用倍率 (手動)", group="需給・財務")
+max_margin   = input.float(3.5, "許容最大信用倍率", group="需給・財務")
+max_per      = input.float(15.0, "最大PER閾値", group="需給・財務")
+min_yield    = input.float(2.0, "最小配当利回り(%)", group="需給・財務")
+
+// ----------------------------------------------------------
+// 2. 厳密な5年期間計算
+// ----------------------------------------------------------
+start_time = timenow - (5 * 365 * 24 * 60 * 60 * 1000)
+is_period  = time >= start_time
+
+// ----------------------------------------------------------
+// 3. 指標計算
+// ----------------------------------------------------------
+auto_per   = request.financial(syminfo.tickerid, "PE_RATIO", "FY", ignore_invalid_symbol=true)
+auto_yield = request.financial(syminfo.tickerid, "DIVIDEND_YIELD", "FY", ignore_invalid_symbol=true)
+
+ma100 = ta.sma(close, 100)
+deviation = ((close - ma100) / ma100) * 100 // 乖離率の計算
+[st_val, st_dir] = ta.supertrend(3.0, 10)
+rsi = ta.rsi(close, 14)
+atr = ta.atr(14)
+high_20 = ta.highest(high, 20)[1]
+
+// ----------------------------------------------------------
+// 4. アラートメッセージ
+// ----------------------------------------------------------
+msg_in  = '{"action": "IN", "mode": "' + strat_mode + '", "ticker": "' + syminfo.ticker + '"}'
+msg_tp  = '{"action": "EXIT_TP", "mode": "' + strat_mode + '"}'
+msg_sl  = '{"action": "EXIT_SL", "mode": "' + strat_mode + '"}'
+msg_end = '{"action": "EXIT_TREND_END", "mode": "' + strat_mode + '"}'
+
+// ----------------------------------------------------------
+// 5. ロジック判定（でっぱり検知追加）
+// ----------------------------------------------------------
+margin_ok = curr_margin < max_margin
+fund_ok   = (na(auto_per) or auto_per < max_per) and (na(auto_yield) or auto_yield > min_yield)
+dev_ok    = deviation < max_deviation // SMA100から離れすぎていないか
+
+bool tech_ok = false
+if strat_mode == "ブレイクアウト"
+    tech_ok := close > ma100 and st_dir == -1 and close > high_20 and rsi > 52
+else
+    // 押し目狙い：乖離率が安全圏（dev_ok）の時のみエントリー
+    tech_ok := close > ma100 and dev_ok and st_dir == -1 and rsi < 48
+
+if (is_period and margin_ok and fund_ok and tech_ok)
+    strategy.entry("Long", strategy.long, alert_message=msg_in)
+
+// ----------------------------------------------------------
+// 6. 決済
+// ----------------------------------------------------------
+sl_mul = strat_mode == "ブレイクアウト" ? 0.7 : 1.2
+strategy.exit("Exit", "Long", 
+     stop=strategy.position_avg_price - atr * sl_mul, 
+     limit=strat_mode == "固定TP/SL" ? strategy.position_avg_price + atr * 1.8 : na,
+     alert_loss=msg_sl, alert_profit=msg_tp,
+     comment_loss="ばっちり損切り", comment_profit="利確")
+
+if (strat_mode != "固定TP/SL" and strategy.position_size > 0 and st_dir == 1)
+    strategy.close("Long", comment="トレンド終了", alert_message=msg_end)
+
+// ----------------------------------------------------------
+// 7. 描画
+// ----------------------------------------------------------
+plot(ma100, color=color.new(#2196F3, 0), linewidth=3, title="SMA100")
+plot(st_val, color=st_dir == -1 ? color.green : color.red, title="ST")
+bgcolor(not is_period ? color.new(color.gray, 90) : na)
+
+var table board = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+if barstate.islast
+    table.cell(board, 0, 0, "PER:", text_color=color.white), table.cell(board, 1, 0, na(auto_per) ? "-" : str.tostring(auto_per, "#.##"), text_color=color.yellow)
+    table.cell(board, 0, 1, "利回り:", text_color=color.white), table.cell(board, 1, 1, na(auto_yield) ? "-" : str.tostring(auto_yield, "#.##") + "%", text_color=color.yellow)
+    table.cell(board, 0, 2, "需給:", text_color=color.white), table.cell(board, 1, 2, margin_ok ? "OK" : "NG", text_color=margin_ok ? color.green : color.red)
+    table.cell(board, 0, 3, "乖離率:", text_color=color.white), table.cell(board, 1, 3, str.tostring(deviation, "#.#") + "%", text_color=dev_ok ? color.green : color.red)
+    table.cell(board, 0, 4, "MODE:", text_color=color.white), table.cell(board, 1, 4, strat_mode, text_color=color.orange)
