@@ -1,0 +1,78 @@
+//@version=6
+strategy("商社スペシャル：5年自動同期モデル", overlay=true, initial_capital=1000000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.JPY)
+
+// -----------------------------------------------------------------------------
+// 1. パラメータ設定
+// -----------------------------------------------------------------------------
+use_margin_filter = input.bool(true, "信用倍率フィルター有効", group="需給・財務")
+current_margin    = input.float(1.5, "現在の信用倍率 (手動入力)", group="需給・財務")
+max_margin        = input.float(3.5, "許容最大倍率", group="需給・財務")
+
+use_fund_filter   = input.bool(true, "財務フィルター有効", group="需給・財務")
+max_per           = input.float(15.0, "許容最大PER", group="需給・財務")
+min_yield         = input.float(2.0, "最小配当利回り(%)", group="需給・財務")
+
+ma_len            = input.int(100, "長期MA期間", group="テクニカル")
+rsi_buy           = input.int(48, "RSI押し目閾値", group="テクニカル")
+
+exit_mode         = input.string("トレンド追随", "決済モード選択", options=["トレンド追随", "固定TP/SL"], group="出口戦略")
+sl_atr_mul        = input.float(1.5, "損切り (ATR倍率)", group="出口戦略")
+tp_atr_mul        = input.float(3.0, "固定利確 (ATR倍率)", group="出口戦略")
+
+// -----------------------------------------------------------------------------
+// 2. 厳密な「5年前」の期間計算
+// -----------------------------------------------------------------------------
+// 実行時の「現在」から5年前をミリ秒単位で計算
+five_years_back_ms = 5 * 365 * 24 * 60 * 60 * 1000
+start_calculation_time = timenow - five_years_back_ms
+is_within_period = time >= start_calculation_time
+
+// -----------------------------------------------------------------------------
+// 3. 指標・データ取得
+// -----------------------------------------------------------------------------
+auto_per   = request.financial(syminfo.tickerid, "PE_RATIO", "FY", ignore_invalid_symbol=true)
+auto_yield = request.financial(syminfo.tickerid, "DIVIDEND_YIELD", "FY", ignore_invalid_symbol=true)
+
+ma_filter = ta.sma(close, ma_len)
+[supertrend, direction] = ta.supertrend(3.0, 10)
+rsi = ta.rsi(close, 14)
+atr = ta.atr(14)
+
+// -----------------------------------------------------------------------------
+// 4. ロジック判定
+// -----------------------------------------------------------------------------
+margin_ok = not use_margin_filter or (current_margin < max_margin)
+fund_ok = true
+if use_fund_filter
+    fund_ok := (na(auto_per) or auto_per < max_per) and (na(auto_yield) or auto_yield > min_yield)
+
+tech_ok = close > ma_filter and direction == -1 and rsi < rsi_buy
+
+// 【重要】5年以内の期間のみエントリーを許可
+long_condition = is_within_period and margin_ok and fund_ok and tech_ok
+
+if (long_condition)
+    strategy.entry("Long", strategy.long, comment="In")
+
+// -----------------------------------------------------------------------------
+// 5. 決済
+// -----------------------------------------------------------------------------
+strategy.exit("SL", "Long", stop=strategy.position_avg_price - atr * sl_atr_mul, comment="SL")
+
+if (exit_mode == "トレンド追随")
+    if (strategy.position_size > 0 and direction == 1)
+        strategy.close("Long", comment="TrendEnd")
+else
+    strategy.exit("TP", "Long", limit=strategy.position_avg_price + atr * tp_atr_mul, comment="FixedTP")
+
+// -----------------------------------------------------------------------------
+// 6. パネル描画
+// -----------------------------------------------------------------------------
+var table board = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+if barstate.islast
+    table.cell(board, 0, 0, "PER:", text_color=color.white)
+    table.cell(board, 1, 0, na(auto_per) ? "データ待ち" : str.tostring(auto_per, "#.##"), text_color=color.yellow)
+    table.cell(board, 0, 1, "利回り:", text_color=color.white)
+    table.cell(board, 1, 1, na(auto_yield) ? "データ待ち" : str.tostring(auto_yield, "#.##") + "%", text_color=color.yellow)
+    table.cell(board, 0, 2, "需給判定:", text_color=color.white)
+    table.cell(board, 1, 2, margin_ok ? "OK" : "NG", text_color=margin_ok ? color.green : color.red)
