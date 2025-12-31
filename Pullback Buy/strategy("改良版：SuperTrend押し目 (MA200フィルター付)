@@ -1,0 +1,68 @@
+//@version=6
+strategy("改良版：SuperTrend押し目 (MA200フィルター付)", overlay=true, initial_capital=1000000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.JPY)
+
+// -----------------------------------------------------------------------------
+// 1. パラメータ設定
+// -----------------------------------------------------------------------------
+// トレンド判定（SuperTrend）
+st_len = input.int(10, "SuperTrend 期間", group="トレンド判定")
+st_mul = input.float(3.0, "SuperTrend 倍率", group="トレンド判定")
+
+// 長期トレンドフィルター（追加機能）
+use_ma_filter = input.bool(true, "200MAフィルターを使う", group="ダマシ低減")
+ma_len = input.int(200, "長期MA期間", group="ダマシ低減")
+
+// エントリー用（RSI）
+rsi_len = input.int(14, "RSI 期間", group="エントリー条件")
+// 【ポイント】回数を増やしたい場合はここを 40 / 60 に変更
+rsi_oversold = input.int(45, "買いゾーン (RSI下限)", group="エントリー条件")
+rsi_overbought = input.int(70, "売りゾーン (RSI上限)", group="エントリー条件")
+
+// リスク管理用（ATR）
+atr_len = input.int(14, "ATR 期間", group="リスク管理")
+sl_mul = input.float(1.5, "損切り (ATR倍率)", group="リスク管理")
+tp_mul = input.float(2.0, "利食い (ATR倍率)", group="リスク管理")
+
+// -----------------------------------------------------------------------------
+// 2. 指標計算
+// -----------------------------------------------------------------------------
+[supertrend, direction] = ta.supertrend(st_mul, st_len)
+rsi = ta.rsi(close, rsi_len)
+atr = ta.atr(atr_len)
+ma200 = ta.sma(close, ma_len) // 長期移動平均線
+
+// プロット
+plot(supertrend, color = direction == -1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+plot(use_ma_filter ? ma200 : na, color=color.gray, linewidth=2, title="200 SMA")
+
+// -----------------------------------------------------------------------------
+// 3. エントリー論理（フィルター強化版）
+// -----------------------------------------------------------------------------
+// フィルター条件の定義
+// 買い: フィルターOFF または 価格がMA200より上
+filter_long = not use_ma_filter or close > ma200
+// 売り: フィルターOFF または 価格がMA200より下
+filter_short = not use_ma_filter or close < ma200
+
+// 買いエントリー条件
+long_condition = direction == -1 and rsi < rsi_oversold and filter_long
+
+// 売りエントリー条件
+short_condition = direction == 1 and rsi > rsi_overbought and filter_short
+
+// -----------------------------------------------------------------------------
+// 4. アラート & 注文執行
+// -----------------------------------------------------------------------------
+alert_msg_open_long = '{"action": "open_long", "ticker": "' + syminfo.ticker + '"}'
+alert_msg_close_long = '{"action": "close_long", "ticker": "' + syminfo.ticker + '"}'
+alert_msg_open_short = '{"action": "open_short", "ticker": "' + syminfo.ticker + '"}'
+alert_msg_close_short = '{"action": "close_short", "ticker": "' + syminfo.ticker + '"}'
+
+if (long_condition)
+    strategy.entry("Long", strategy.long, alert_message=alert_msg_open_long)
+
+if (short_condition)
+    strategy.entry("Short", strategy.short, alert_message=alert_msg_open_short)
+
+strategy.exit("Exit Long", "Long", stop=strategy.position_avg_price - atr * sl_mul, limit=strategy.position_avg_price + atr * tp_mul, alert_message=alert_msg_close_long)
+strategy.exit("Exit Short", "Short", stop=strategy.position_avg_price + atr * sl_mul, limit=strategy.position_avg_price - atr * tp_mul, alert_message=alert_msg_close_short)
