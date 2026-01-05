@@ -1,0 +1,243 @@
+//@version=6
+strategy(title//@version=6
+strategy(title="5727Sync Pro (Bank Trend Follow)", shorttitle="5727Pro_Bank",
+     overlay=true, initial_capital=1000000, currency=currency.JPY,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true)
+
+//==================== 1. 設定：期間と資金 ====================
+groupTime = "バックテスト期間"
+useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
+startYear = input.int(2023,   "開始 年", group=groupTime)
+startMo   = input.int(1,      "開始 月", group=groupTime)
+startDy   = input.int(1,      "開始 日", group=groupTime)
+endYear   = input.int(2030,   "終了 年", group=groupTime)
+endMo     = input.int(12,     "終了 月", group=groupTime)
+endDy     = input.int(31,     "終了 日", group=groupTime)
+
+// 期間判定
+inDateRange() =>
+    not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
+
+//==================== 2. 設定：コアロジック（改良） ====================
+groupCore  = "トレンド判定 (MACD/EMA)"
+emaFastLen = input.int(12,  "EMA 短期", minval=2, group=groupCore)
+emaSlowLen = input.int(26,  "EMA 長期", minval=2, group=groupCore)
+useVol     = input.bool(true, "出来高フィルターを使う", group=groupCore)
+volMaLen   = input.int(20,  "出来高MA期間", group=groupCore)
+
+groupFilter = "フィルター (ADX/RSI)"
+useAdx      = input.bool(true, "ADXフィルターを使う（重要）", group=groupFilter)
+adxLen      = input.int(14,    "ADX期間", group=groupFilter)
+adxTh       = input.int(20,    "ADX閾値（これ以下はレンジとみなす）", group=groupFilter)
+rsiLen      = input.int(14,    "RSI期間",   minval=2, group=groupFilter)
+rsiMin      = input.int(50,    "RSI下限",   minval=0, maxval=100, group=groupFilter)
+
+groupRisk  = "リスク管理 & 利確"
+atrLen     = input.int(14,    "ATR期間",   minval=2, group=groupRisk)
+slMult     = input.float(2.0, "初期SL ATR倍率",  step=0.1, group=groupRisk)
+useTP1     = input.bool(true, "部分利確 (TP1) をする", group=groupRisk)
+tp1Mult    = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupRisk)
+partPct    = input.int(50,    "TP1利確比率（%）", minval=0, maxval=100, group=groupRisk)
+useTrail   = input.bool(true, "TP1後にトレーリングストップを開始", group=groupRisk)
+
+//==================== 計算処理 ====================
+price   = close
+emaFast = ta.ema(price, emaFastLen)
+emaSlow = ta.ema(price, emaSlowLen)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(price, rsiLen)
+
+// ADX計算
+[diPlus, diMinus, adxValue] = ta.dmi(adxLen, adxLen)
+
+// 出来高計算
+volMa = ta.sma(volume, volMaLen)
+volOk = not useVol or (volume > volMa)
+
+//==================== シグナル判定 ====================
+trendUp = emaFast > emaSlow and price > emaFast 
+adxOk   = not useAdx or (adxValue > adxTh)
+rsiOk   = rsi > rsiMin
+fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
+
+isLong = strategy.position_size > 0
+fireBuy = fireBuyRaw and not isLong
+
+//==================== ポジション管理変数 ====================
+var float entryPx   = na
+var float slPrice   = na
+var float tp1Price  = na
+var bool  tp1Executed = false
+
+if not isLong
+    tp1Executed := false
+
+//==================== エントリー処理 ====================
+if fireBuy
+    strategy.entry("BUY", strategy.long, comment="Trend Start")
+    entryPx   := close
+    slPrice   := close - (atr * slMult)
+    tp1Price  := close + (atr * tp1Mult)
+    tp1Executed := false
+
+//==================== エグジット & トレーリング処理 ====================
+if isLong
+    float proposedSL = high - (atr * slMult)
+    
+    if useTrail and tp1Executed
+        slPrice := math.max(slPrice, proposedSL)
+    else if useTrail and close > tp1Price
+        slPrice := math.max(slPrice, entryPx - (atr * 0.5))
+
+    if useTP1 and not tp1Executed and high >= tp1Price
+        strategy.exit("TP1", from_entry="BUY", qty_percent=partPct, limit=tp1Price, stop=slPrice, comment_profit="Partial Lock")
+        tp1Executed := true
+        slPrice := math.max(slPrice, entryPx)
+
+    strategy.exit("Trailing Exit", from_entry="BUY", stop=slPrice, comment_loss="Trend End")
+
+//==================== 描画 ====================
+plot(emaFast, "EMA Fast", color=color.new(color.teal, 0), linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+
+// SLラインの可視化 (修正: style_linebr に変更)
+plot(isLong ? slPrice : na, "Stop Loss", color=color.red, style=plot.style_linebr, linewidth=2)
+
+plot(isLong and not tp1Executed ? tp1Price : na, "TP1 Target", color=color.green, style=plot.style_circles, linewidth=1)
+
+bgcolor(trendUp and adxOk ? color.new(color.green, 90) : na, title="Trend Zone")
+
+// テーブル表示
+// (修正: 行末が切れないように記述)
+var table statusTable = table.new(position.bottom_right, 2, 4, border_width=1)
+
+if barstate.islast
+    pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
+    c_pnl  = pnlPct > 0 ? color.teal : color.red
+    
+    table.cell(statusTable, 0, 0, "Trend Strength (ADX)", bgcolor=color.gray)
+    table.cell(statusTable, 1, 0, str.tostring(adxValue, "#.##"), bgcolor=adxValue > adxTh ? color.green : color.gray)
+    
+    table.cell(statusTable, 0, 1, "Current PnL", bgcolor=color.gray)
+    table.cell(statusTable, 1, 1, str.tostring(pnlPct, "#.##") + "%", bgcolor=c_pnl, text_color=color.white)", shorttitle="5727Pro_Bank",
+     overlay=true, initial_capital=1000000, currency=currency.JPY,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true)
+
+//==================== 1. 設定：期間と資金 ====================
+groupTime = "バックテスト期間"
+useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
+startYear = input.int(2023,   "開始 年", group=groupTime)
+startMo   = input.int(1,      "開始 月", group=groupTime)
+startDy   = input.int(1,      "開始 日", group=groupTime)
+endYear   = input.int(2030,   "終了 年", group=groupTime)
+endMo     = input.int(12,     "終了 月", group=groupTime)
+endDy     = input.int(31,     "終了 日", group=groupTime)
+
+// 期間判定
+inDateRange() =>
+    not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
+
+//==================== 2. 設定：コアロジック（改良） ====================
+groupCore  = "トレンド判定 (MACD/EMA)"
+emaFastLen = input.int(12,  "EMA 短期", minval=2, group=groupCore)
+emaSlowLen = input.int(26,  "EMA 長期", minval=2, group=groupCore)
+useVol     = input.bool(true, "出来高フィルターを使う", group=groupCore)
+volMaLen   = input.int(20,  "出来高MA期間", group=groupCore)
+
+groupFilter = "フィルター (ADX/RSI)"
+useAdx      = input.bool(true, "ADXフィルターを使う（重要）", group=groupFilter)
+adxLen      = input.int(14,    "ADX期間", group=groupFilter)
+adxTh       = input.int(20,    "ADX閾値（これ以下はレンジとみなす）", group=groupFilter)
+rsiLen      = input.int(14,    "RSI期間",   minval=2, group=groupFilter)
+rsiMin      = input.int(50,    "RSI下限",   minval=0, maxval=100, group=groupFilter)
+
+groupRisk  = "リスク管理 & 利確"
+atrLen     = input.int(14,    "ATR期間",   minval=2, group=groupRisk)
+slMult     = input.float(2.0, "初期SL ATR倍率",  step=0.1, group=groupRisk)
+useTP1     = input.bool(true, "部分利確 (TP1) をする", group=groupRisk)
+tp1Mult    = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupRisk)
+partPct    = input.int(50,    "TP1利確比率（%）", minval=0, maxval=100, group=groupRisk)
+useTrail   = input.bool(true, "TP1後にトレーリングストップを開始", group=groupRisk)
+
+//==================== 計算処理 ====================
+price   = close
+emaFast = ta.ema(price, emaFastLen)
+emaSlow = ta.ema(price, emaSlowLen)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(price, rsiLen)
+
+// ADX計算
+[diPlus, diMinus, adxValue] = ta.dmi(adxLen, adxLen)
+
+// 出来高計算
+volMa = ta.sma(volume, volMaLen)
+volOk = not useVol or (volume > volMa)
+
+//==================== シグナル判定 ====================
+trendUp = emaFast > emaSlow and price > emaFast 
+adxOk   = not useAdx or (adxValue > adxTh)
+rsiOk   = rsi > rsiMin
+fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
+
+isLong = strategy.position_size > 0
+fireBuy = fireBuyRaw and not isLong
+
+//==================== ポジション管理変数 ====================
+var float entryPx   = na
+var float slPrice   = na
+var float tp1Price  = na
+var bool  tp1Executed = false
+
+if not isLong
+    tp1Executed := false
+
+//==================== エントリー処理 ====================
+if fireBuy
+    strategy.entry("BUY", strategy.long, comment="Trend Start")
+    entryPx   := close
+    slPrice   := close - (atr * slMult)
+    tp1Price  := close + (atr * tp1Mult)
+    tp1Executed := false
+
+//==================== エグジット & トレーリング処理 ====================
+if isLong
+    float proposedSL = high - (atr * slMult)
+    
+    if useTrail and tp1Executed
+        slPrice := math.max(slPrice, proposedSL)
+    else if useTrail and close > tp1Price
+        slPrice := math.max(slPrice, entryPx - (atr * 0.5))
+
+    if useTP1 and not tp1Executed and high >= tp1Price
+        strategy.exit("TP1", from_entry="BUY", qty_percent=partPct, limit=tp1Price, stop=slPrice, comment_profit="Partial Lock")
+        tp1Executed := true
+        slPrice := math.max(slPrice, entryPx)
+
+    strategy.exit("Trailing Exit", from_entry="BUY", stop=slPrice, comment_loss="Trend End")
+
+//==================== 描画 ====================
+plot(emaFast, "EMA Fast", color=color.new(color.teal, 0), linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+
+// SLラインの可視化 (修正: style_linebr に変更)
+plot(isLong ? slPrice : na, "Stop Loss", color=color.red, style=plot.style_linebr, linewidth=2)
+
+plot(isLong and not tp1Executed ? tp1Price : na, "TP1 Target", color=color.green, style=plot.style_circles, linewidth=1)
+
+bgcolor(trendUp and adxOk ? color.new(color.green, 90) : na, title="Trend Zone")
+
+// テーブル表示
+// (修正: 行末が切れないように記述)
+var table statusTable = table.new(position.bottom_right, 2, 4, border_width=1)
+
+if barstate.islast
+    pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
+    c_pnl  = pnlPct > 0 ? color.teal : color.red
+    
+    table.cell(statusTable, 0, 0, "Trend Strength (ADX)", bgcolor=color.gray)
+    table.cell(statusTable, 1, 0, str.tostring(adxValue, "#.##"), bgcolor=adxValue > adxTh ? color.green : color.gray)
+    
+    table.cell(statusTable, 0, 1, "Current PnL", bgcolor=color.gray)
+    table.cell(statusTable, 1, 1, str.tostring(pnlPct, "#.##") + "%", bgcolor=c_pnl, text_color=color.white)
