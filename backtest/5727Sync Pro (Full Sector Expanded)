@@ -1,0 +1,182 @@
+//@version=6
+strategy(title="5727Sync Pro (Sector Expanded)", shorttitle="5727Pro_Exp",
+     overlay=true, initial_capital=1000000, currency=currency.JPY,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true)
+
+//=============================================================================
+// 1. セクター・アセット選択システム
+//=============================================================================
+groupSector = "🚀 投資対象・セクター選択"
+
+// 改良点: 主要業種（半導体、海運、自動車、医薬品、電力、小売）を追加
+sectorInput = input.string("Mega Bank (メガバンク)", "ターゲットを選択", 
+     options=[
+         "Mega Bank (メガバンク)", "Regional Bank (地銀)", 
+         "Semicon (半導体)", "High Tech (ハイテク)", "Marine (海運)", 
+         "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", 
+         "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)",
+         "Real Estate (不動産)", "Consulting (コンサル)", "Construction (建設)", 
+         "Transportation (運輸)", "Consumer (生活用品)", 
+         "ETH/JPY (イーサリアム)", "Resources (金/銀/資源)", 
+         "Index N225 (日経平均)", "Index NASDAQ", 
+         "Others (その他)", "Manual (手動)"
+     ], 
+     group=groupSector, tooltip="選択した資産クラスのボラティリティ特性に合わせて、内部ロジックが自動最適化されます。")
+
+//=============================================================================
+// 2. パラメーター設定
+//=============================================================================
+groupTime = "バックテスト期間"
+useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
+startYear = input.int(2023,   "開始 年", group=groupTime)
+startMo   = input.int(1,      "開始 月", group=groupTime)
+startDy   = input.int(1,      "開始 日", group=groupTime)
+endYear   = input.int(2030,   "終了 年", group=groupTime)
+endMo     = input.int(12,     "終了 月", group=groupTime)
+endDy     = input.int(31,     "終了 日", group=groupTime)
+
+// --- 手動設定用パラメーター ---
+groupMan    = "手動/その他用 設定"
+man_FastLen = input.int(12,  "EMA 短期", group=groupMan)
+man_SlowLen = input.int(26,  "EMA 長期", group=groupMan)
+man_AdxTh   = input.int(20,  "ADX 閾値", group=groupMan)
+man_SlMult  = input.float(2.0, "SL ATR倍率", step=0.1, group=groupMan)
+man_Tp1Mult = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupMan)
+
+//=============================================================================
+// 3. ロジック変数の自動マッピング (大幅拡充)
+//=============================================================================
+// [Fast, Slow, ADX_Th, SL_Mult, TP_Mult, Use_Vol]
+[p_fastLen, p_slowLen, p_adxTh, p_slMult, p_tp1Mult, p_useVol] = switch sectorInput
+    // --- 金融 ---
+    "Mega Bank (メガバンク)"    => [12, 26, 20, 2.0, 1.5, true]
+    "Regional Bank (地銀)"      => [14, 30, 18, 2.5, 1.8, false] // 板薄対応
+
+    // --- テック・高ボラティリティ ---
+    "Semicon (半導体)"          => [9,  21, 24, 2.5, 2.0, true]  // NEW: 高速反応・広めのストップ
+    "High Tech (ハイテク)"      => [9,  21, 23, 2.2, 1.2, true]
+    "ETH/JPY (イーサリアム)"    => [10, 20, 25, 3.5, 4.0, true]
+
+    // --- 景気敏感・輸出 ---
+    "Marine (海運)"             => [10, 25, 25, 3.0, 3.0, true]  // NEW: 超高ボラティリティ対応
+    "Automotive (自動車)"       => [13, 26, 20, 2.0, 1.5, true]  // NEW: 標準的だがトレンド重視
+    "Manufacturing (製造)"      => [13, 26, 18, 2.0, 1.5, true]
+    "Trading (商社)"            => [12, 26, 25, 2.0, 2.0, true]
+
+    // --- 内需・ディフェンシブ ---
+    "Pharma (医薬品)"           => [15, 30, 18, 1.8, 1.4, true]  // NEW: ダマシ回避のゆったり設定
+    "Retail (小売)"             => [12, 24, 20, 2.0, 1.5, false] // NEW: 出来高要件を緩和
+    "Utility (電力/ガス)"       => [15, 35, 18, 1.8, 1.2, true]  // NEW: 低ベータ・長期トレンド
+    "Real Estate (不動産)"      => [14, 30, 18, 2.0, 1.6, true]
+    "Construction (建設)"       => [15, 35, 18, 1.8, 1.2, true]
+    "Transportation (運輸)"     => [13, 28, 20, 2.2, 1.8, true]
+    "Consumer (生活用品)"       => [14, 30, 15, 1.8, 1.2, true]
+
+    // --- その他・指数 ---
+    "Consulting (コンサル)"     => [12, 25, 22, 2.3, 1.8, true]
+    "Resources (金/銀/資源)"    => [14, 28, 20, 2.0, 2.5, true]
+    "Index N225 (日経平均)"     => [12, 26, 20, 2.0, 1.5, true]
+    "Index NASDAQ"              => [10, 24, 22, 2.2, 2.0, true]
+    
+    // --- デフォルト ---
+    => [man_FastLen, man_SlowLen, man_AdxTh, man_SlMult, man_Tp1Mult, true] 
+
+// 期間判定
+inDateRange() =>
+    not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
+
+//=============================================================================
+// 4. インジケーター計算
+//=============================================================================
+price   = close
+emaFast = ta.ema(price, p_fastLen)
+emaSlow = ta.ema(price, p_slowLen)
+
+atr     = ta.atr(14)
+rsi     = ta.rsi(price, 14)
+[dp, dm, adx] = ta.dmi(14, 14)
+
+// 出来高フィルター
+volMa = ta.sma(volume, 20)
+volOk = not p_useVol or (volume > volMa)
+
+//=============================================================================
+// 5. シグナル & トレード管理
+//=============================================================================
+trendUp = emaFast > emaSlow and price > emaFast 
+adxOk   = adx > p_adxTh
+rsiOk   = rsi > 50
+fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
+
+isLong = strategy.position_size > 0
+fireBuy = fireBuyRaw and not isLong
+
+// 変数管理
+var float entryPx   = na
+var float slPrice   = na
+var float tp1Price  = na
+var bool  tp1Executed = false
+
+if not isLong
+    tp1Executed := false
+
+// エントリー
+if fireBuy
+    strategy.entry("BUY", strategy.long, comment= "Long")
+    entryPx   := close
+    slPrice   := close - (atr * p_slMult)
+    tp1Price  := close + (atr * p_tp1Mult)
+    tp1Executed := false
+
+// エグジット & トレーリング
+if isLong
+    float proposedSL = high - (atr * p_slMult)
+    
+    // 改良点: 高ボラティリティ銘柄（半導体、海運）をアグレッシブトレール対象に追加
+    bool aggressiveTrail = (sectorInput == "ETH/JPY (イーサリアム)" or sectorInput == "High Tech (ハイテク)" or sectorInput == "Index NASDAQ" or sectorInput == "Consulting (コンサル)" or sectorInput == "Semicon (半導体)" or sectorInput == "Marine (海運)")
+
+    if tp1Executed
+        slPrice := math.max(slPrice, proposedSL)
+    else if close > tp1Price
+        float buffer = aggressiveTrail ? (atr * 0.5) : (atr * 0.1)
+        slPrice := math.max(slPrice, entryPx + buffer)
+
+    // 部分利確 (50%)
+    if not tp1Executed and high >= tp1Price
+        strategy.exit("TP1", from_entry="BUY", qty_percent=50, limit=tp1Price, stop=slPrice, comment_profit="Lock")
+        tp1Executed := true
+    
+    // 全決済
+    strategy.exit("Exit", from_entry="BUY", stop=slPrice, comment_loss="End")
+
+//=============================================================================
+// 6. 描画と情報表示
+//=============================================================================
+plot(emaFast, "EMA Fast", color=color.teal, linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.orange, linewidth=2)
+plot(isLong ? slPrice : na, "SL", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(isLong and not tp1Executed ? tp1Price : na, "TP1", color=color.green, style=plot.style_circles, linewidth=1)
+
+bgcolor(trendUp and adxOk ? color.new(color.green, 90) : na, title="Trend Zone")
+
+// ダッシュボード
+var table statusTable = table.new(position.bottom_right, 2, 6, border_width=1, frame_color=color.gray)
+if barstate.islast
+    // セクター表示（短縮表示）
+    table.cell(statusTable, 0, 0, "Target", bgcolor=color.new(color.blue, 30), text_color=color.white)
+    table.cell(statusTable, 1, 0, str.substring(sectorInput, 0, 15), bgcolor=color.black, text_color=color.white)
+    
+    // パラメーター値
+    table.cell(statusTable, 0, 1, "EMA / SL", bgcolor=color.gray)
+    table.cell(statusTable, 1, 1, str.tostring(p_fastLen) + "-" + str.tostring(p_slowLen) + " / x" + str.tostring(p_slMult), bgcolor=color.black, text_color=color.white)
+    
+    // ADX
+    table.cell(statusTable, 0, 2, "ADX (Th)", bgcolor=color.gray)
+    table.cell(statusTable, 1, 2, str.tostring(adx, "#.#") + " (" + str.tostring(p_adxTh) + ")", bgcolor=adx>p_adxTh ? color.green : color.black, text_color=color.white)
+
+    // 損益
+    pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
+    c_pnl  = pnlPct > 0 ? color.teal : pnlPct < 0 ? color.red : color.gray
+    table.cell(statusTable, 0, 3, "PnL %", bgcolor=color.gray)
+    table.cell(statusTable, 1, 3, str.tostring(pnlPct, "#.##") + "%", bgcolor=c_pnl, text_color=color.white)
