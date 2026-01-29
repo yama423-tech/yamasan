@@ -1,0 +1,256 @@
+//@version=6
+indicator("統合版：底値ハンター ＋ 波動TP判定 (Hybrid v2)", overlay=true, shorttitle="Hunter-Wave Hybrid v2", scale=scale.right)
+
+// ==========================================
+// 🛠 1. 設定：底値ハンター (Hunter Logic)
+// ==========================================
+grp_hunter = "【設定】底値ハンター (Bottom Logic)"
+// 👇 ここに全リストを復活させました
+target_group = input.string("Current Chart", "監視対象 (パネル用)", 
+     options=[
+         "Current Chart", 
+         "--- 7大商社 ---", "Itochu (8001)", "Mitsubishi (8058)", "Mitsui (8031)", "Sumitomo (8053)", 
+         "Marubeni (8002)", "Toyota Tsusho (8015)", "Sojitz (2768)",
+         "--- メガバンク ---", "MUFG (8306)", "SMFG (8316)", "Mizuho (8411)",
+         "--- 日本ETF ---", "Nikkei 225 (ETF 1321)", "TOPIX (ETF 1306)",
+         "--- 米国ETF/ETN ---", "FANG+ (ETN FNGS)", "S&P 500 (ETF SPY)", "Emerging (ETF EEM)", "India (ETF INDA)"
+     ], group=grp_hunter)
+
+sensitivity = input.string("Lv3 (Normal)", "感度設定 (買い判定)", 
+     options=["Lv1 (Very Hard)", "Lv2 (Hard)", "Lv3 (Normal)", "Lv4 (Easy)", "Lv5 (Very Easy)"], 
+     tooltip="Lv1: RSI<20 (深い底), Lv5: RSI<40 (浅い押し目)", group=grp_hunter)
+
+show_hunter_tbl = input.bool(true, "底値監視パネルを表示 (右上)", group=grp_hunter)
+
+// ==========================================
+// 🛠 2. 設定：トレンド・TP/SL (WTP Logic)
+// ==========================================
+grp_logic = "【設定】トレンド・TP算出 (WTP Logic)"
+tfMode    = input.string("自動", "時間足モード", options=["自動","手動"], group=grp_logic)
+tfManual  = input.string("スイング", "（手動時）設定", options=["短期","スイング","中期","長期"], group=grp_logic)
+filterStr = input.string("標準", "判定シビア度", options=["緩め", "標準", "厳しめ"], group=grp_logic)
+
+grp_risk  = "【設定】リスク管理 (TP/SL)"
+slMult_in = input.float(1.5, "SL (ATR倍率)", step=0.1, group=grp_risk)
+tp1Mult_in= input.float(2.0, "TP1 (ATR倍率)", step=0.1, group=grp_risk)
+tp2Mult_in= input.float(4.0, "TP2 (ATR倍率)", step=0.1, group=grp_risk, tooltip="谷底からの大きなリワードを狙うため広めに設定推奨")
+showLines = input.bool(true, "TP/SLラインを表示", group=grp_risk)
+
+grp_vis   = "【表示】デザイン"
+showMA    = input.bool(true, "MAラインを表示", group=grp_vis)
+showWtpTbl= input.bool(true, "トレード状況パネルを表示 (右下)", group=grp_vis)
+
+// ==========================================
+// 🧠 3. ロジック共通計算
+// ==========================================
+// ATR (共通)
+atr = ta.atr(14)
+
+// --- Hunter用パラメータ ---
+var float rsi_limit = 30.0
+var float bb_dev    = 2.0
+if sensitivity == "Lv1 (Very Hard)"
+    rsi_limit := 20.0, bb_dev := 2.4
+else if sensitivity == "Lv2 (Hard)"
+    rsi_limit := 25.0, bb_dev := 2.2
+else if sensitivity == "Lv3 (Normal)"
+    rsi_limit := 30.0, bb_dev := 2.0
+else if sensitivity == "Lv4 (Easy)"
+    rsi_limit := 35.0, bb_dev := 1.8
+else
+    rsi_limit := 40.0, bb_dev := 1.6
+
+// --- WTP用パラメータ (モード自動切替) ---
+var int maFast = 20, maMid = 60, maLong = 200
+var float volMultBase = 1.2
+var int volLen = 60
+
+var string autoMode = timeframe.isminutes ? "短期" : "スイング"
+string selMode = tfMode == "自動" ? autoMode : tfManual
+
+if selMode == "短期"
+    maFast := 10, maMid := 40, maLong := 150
+else if selMode == "スイング"
+    maFast := 20, maMid := 60, maLong := 200
+else 
+    maFast := 30, maMid := 90, maLong := 220
+
+// MA計算
+emaF = ta.ema(close, maFast)
+emaM = ta.ema(close, maMid)
+emaL = ta.ema(close, maLong)
+plot(showMA ? emaL : na, "MA長期", color=color.new(color.gray, 50), linewidth=2)
+plot(showMA ? emaM : na, "MA中期", color=color.new(color.orange, 50), linewidth=1)
+
+// ==========================================
+// 📉 4. Hunterロジック (底値判定)
+// ==========================================
+// 現在のチャートでの底値判定
+[h_rsi, h_basis, h_dev] = request.security(syminfo.tickerid, timeframe.period, [ta.rsi(close, 14), ta.sma(close, 20), ta.stdev(close, 20)])
+float h_lower_bb = h_basis - (bb_dev * h_dev)
+bool is_hunter_buy = close < h_lower_bb and h_rsi < rsi_limit
+
+// 谷底サイン表示
+plotshape(is_hunter_buy, "底値拾い", shape.triangleup, location.belowbar, color.red, size=size.small, text="Bottom", textcolor=color.red)
+bgcolor(is_hunter_buy ? color.new(color.red, 90) : na, title="Hunter Zone")
+
+// ==========================================
+// 📈 5. WTPロジック (トレンド波動判定)
+// ==========================================
+// トレンド定義
+trendUp = emaF > emaM and emaM > emaL
+volAvg = ta.sma(volume, volLen)
+volOK = volume > volAvg * volMultBase // 簡易判定
+
+// 波動認識
+ph = ta.pivothigh(high, 3, 3)
+lastSwingHigh = ta.valuewhen(not na(ph), ph, 0)
+
+// Wave 1 (初動)
+wave1 = trendUp and close > lastSwingHigh and close[1] <= lastSwingHigh
+// Wave 2 (押し目)
+wave2 = trendUp and close < emaF and close > emaM and ta.crossover(close, emaF)
+// Wave 3 (加速)
+reAccel = ta.crossover(close, lastSwingHigh)
+wave3 = trendUp and reAccel
+
+// サイン表示
+plotshape(wave1, "第1波", shape.labelup, location.belowbar, color.new(color.green, 20), size=size.tiny, text="W1", textcolor=color.white)
+plotshape(wave2, "第2波", shape.labelup, location.belowbar, color.new(color.teal, 20), size=size.tiny, text="W2", textcolor=color.white)
+plotshape(wave3, "第3波", shape.labelup, location.belowbar, color.new(color.lime, 10), size=size.tiny, text="W3", textcolor=color.black)
+
+// ==========================================
+// 💹 6. 統合トレード管理 (Entry & TP/SL)
+// ==========================================
+var bool  inTrade = false
+var float enPrice = na
+var float tp1Price = na
+var float tp2Price = na
+var float slPrice = na
+var string entryType = ""
+
+// エントリー判定 (Hunter または WTP波動)
+bool entry_signal = is_hunter_buy or wave1 or wave2 or wave3
+
+if entry_signal and not inTrade
+    inTrade := true
+    enPrice := close
+    
+    // エントリー種類記録
+    if is_hunter_buy
+        entryType := "Bottom"
+    else if wave1
+        entryType := "Wave1"
+    else if wave2
+        entryType := "Wave2"
+    else 
+        entryType := "Wave3"
+
+    // TP/SL計算
+    tp1Price := enPrice + atr * tp1Mult_in
+    tp2Price := enPrice + atr * tp2Mult_in
+    slPrice  := enPrice - atr * slMult_in
+
+// 決済判定
+hitTP1 = inTrade and high >= tp1Price
+hitTP2 = inTrade and high >= tp2Price
+hitSL  = inTrade and low <= slPrice
+
+// 決済マーカー
+plotchar(hitTP1, title="TP1", char="1", location=location.abovebar, color=color.green, text="TP1", textcolor=color.green, size=size.tiny)
+plotchar(hitTP2, title="TP2", char="★", location=location.abovebar, color=color.green, text="TP2 Done", textcolor=color.green, size=size.small)
+plotchar(hitSL,  title="SL",  char="x", location=location.abovebar, color=color.red,   text="SL", textcolor=color.red,   size=size.tiny)
+
+// ポジションリセット (TP2またはSLで終了)
+if hitTP2 or hitSL
+    inTrade := false
+    enPrice := na
+    entryType := ""
+
+// ライン描画
+var line l_tp1 = na, var line l_tp2 = na, var line l_sl = na, var line l_en = na
+if showLines and inTrade
+    line.delete(l_tp1), line.delete(l_tp2), line.delete(l_sl), line.delete(l_en)
+    l_en  := line.new(bar_index-1, enPrice, bar_index+5, enPrice, color=color.gray, style=line.style_dotted)
+    l_tp1 := line.new(bar_index-1, tp1Price, bar_index+5, tp1Price, color=color.green, style=line.style_dashed)
+    l_tp2 := line.new(bar_index-1, tp2Price, bar_index+5, tp2Price, color=color.lime, style=line.style_solid, width=2)
+    l_sl  := line.new(bar_index-1, slPrice,  bar_index+5, slPrice,  color=color.red,   style=line.style_solid)
+
+// ==========================================
+// 🖥 7. 情報パネル (Hunter: 右上 / WTP: 右下)
+// ==========================================
+
+// --- Hunter Panel (Watchlist) ---
+var string[] p_names = array.new_string(0)
+var string[] p_tickers = array.new_string(0)
+
+// カテゴリ判定とリスト作成
+// 👇 リストの種類を増やしました
+if barstate.isfirst
+    if str.contains(target_group, "バンク")
+        // 銀行
+        array.push(p_names, "UFJ"),    array.push(p_tickers, "TSE:8306")
+        array.push(p_names, "三井住友"), array.push(p_tickers, "TSE:8316")
+        array.push(p_names, "みずほ"),  array.push(p_tickers, "TSE:8411")
+    else if str.contains(target_group, "ETF") or str.contains(target_group, "FANG") or str.contains(target_group, "S&P") or str.contains(target_group, "Index")
+        // 指数・ETF (要望のIndiaなどをここに追加)
+        array.push(p_names, "日経225"), array.push(p_tickers, "TSE:1321")
+        array.push(p_names, "TOPIX"),   array.push(p_tickers, "TSE:1306")
+        array.push(p_names, "FANG+"),   array.push(p_tickers, "NYSE:FNGS")
+        array.push(p_names, "S&P500"),  array.push(p_tickers, "AMEX:SPY")
+        array.push(p_names, "新興国"),   array.push(p_tickers, "AMEX:EEM")
+        array.push(p_names, "インド"),   array.push(p_tickers, "BATS:INDA")
+    else
+        // デフォルト: 商社 (またはCurrent Chart)
+        array.push(p_names, "伊藤忠"), array.push(p_tickers, "TSE:8001")
+        array.push(p_names, "三菱商"), array.push(p_tickers, "TSE:8058")
+        array.push(p_names, "三井物"), array.push(p_tickers, "TSE:8031")
+        array.push(p_names, "住友商"), array.push(p_tickers, "TSE:8053")
+        array.push(p_names, "丸紅"),   array.push(p_tickers, "TSE:8002")
+
+// 関数: データ取得
+f_check_hunter(_t) =>
+    [_c, _rsi, _basis, _dev] = request.security(_t, timeframe.period, [close, ta.rsi(close, 14), ta.sma(close, 20), ta.stdev(close, 20)])
+    _l_bb = _basis - (bb_dev * _dev)
+    _buy = _c < _l_bb and _rsi < rsi_limit
+    [_c, _rsi, _buy]
+
+if show_hunter_tbl and barstate.islast and target_group != "Current Chart"
+    var table h_tbl = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 50))
+    table.cell(h_tbl, 0, 0, "Hunter Watch", bgcolor=color.new(color.blue, 60), text_color=color.white)
+    
+    for i = 0 to array.size(p_names) - 1
+        _n = array.get(p_names, i)
+        _t = array.get(p_tickers, i)
+        [v_c, v_r, v_b] = f_check_hunter(_t)
+        
+        c_bg = v_b ? color.red : color.new(color.black, 60)
+        table.cell(h_tbl, 0, i+1, _n, bgcolor=c_bg, text_color=color.white, text_size=size.small)
+        table.cell(h_tbl, 1, i+1, str.tostring(v_r, "#.0"), bgcolor=c_bg, text_color=v_r<30?color.red:color.white, text_size=size.small)
+        table.cell(h_tbl, 2, i+1, v_b?"BUY":"-", bgcolor=c_bg, text_color=color.yellow, text_size=size.small)
+
+// --- WTP Panel (Status) ---
+if showWtpTbl and barstate.islast
+    var table w_tbl = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 50))
+    table.merge_cells(w_tbl, 0, 0, 1, 0)
+    table.cell(w_tbl, 0, 0, "Trade Monitor", bgcolor=color.new(color.green, 60), text_color=color.white)
+    
+    // Status
+    statusTxt = inTrade ? "Entry: " + entryType : "Wait"
+    statusCol = inTrade ? color.lime : color.gray
+    table.cell(w_tbl, 0, 1, "Status", text_color=color.white)
+    table.cell(w_tbl, 1, 1, statusTxt, text_color=statusCol)
+    
+    // Prices
+    if inTrade
+        table.cell(w_tbl, 0, 2, "TP1 / TP2", text_color=color.white)
+        table.cell(w_tbl, 1, 2, str.tostring(tp1Price, "#") + " / " + str.tostring(tp2Price, "#"), text_color=color.green)
+        table.cell(w_tbl, 0, 3, "Stop Loss", text_color=color.white)
+        table.cell(w_tbl, 1, 3, str.tostring(slPrice, "#"), text_color=color.red)
+
+// ==========================================
+// 🔔 アラート
+// ==========================================
+alertcondition(is_hunter_buy, "Hunter Buy", "【底値】Hunterの買いシグナル点灯")
+alertcondition(hitTP1, "TP1 Hit", "【利確】TP1到達")
+alertcondition(hitTP2, "TP2 Hit", "【利確】TP2到達 (天井候補)")
