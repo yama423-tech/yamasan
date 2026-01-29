@@ -1,0 +1,175 @@
+//@version=6
+indicator("1570 日経レバ｜順張りブレイクIN【指数系】v8（VWAP率強化版）", overlay=true)
+
+// ===== ユーティリティ =====
+f_ck(cond) => cond ? "✔" : "—"
+f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
+
+// ===== パラメータ =====
+// 1. シグナル設定
+group_sig = "シグナル条件"
+volMult   = input.float(2.0, "出来高倍率（平均比）", step=0.1, group=group_sig)
+volLen    = input.int(60, "出来高平均期間", group=group_sig)
+ibBars    = input.int(4, "初動計測本数（IB）", minval=2, maxval=8, group=group_sig)
+usePrevHi = input.bool(true, "前日高値ブレイクも条件に含める", group=group_sig)
+
+// VWAP設定（今回追加した部分）
+vwapThPct = input.float(100.0, "VWAP判定比率(%)", step=0.1, group=group_sig, tooltip="100でVWAP同値。100.1にするとVWAPより0.1%上にあることが条件になります")
+
+// MACD設定
+macdMode  = input.string("クロス瞬間の時のみ", "MACD判定モード", options=["クロス瞬間の時のみ", "上昇トレンド中ならOK"], group=group_sig, tooltip="「上昇トレンド中」にすると、GC後のブレイクも拾います")
+// RSI設定
+rsiThMin  = input.int(52, "RSI下限（これ以下は無視）", minval=30, group=group_sig)
+rsiThMax  = input.int(85, "RSI上限（これ以上は過熱で無視）", minval=70, group=group_sig)
+
+// 2. リスク管理
+group_risk = "利確/逆指値/トレーリング"
+tp1Pct     = input.float(0.015, "利確①（+%）", step=0.005, group=group_risk)
+tp2Pct     = input.float(0.03, "利確②（+%）", step=0.005, group=group_risk)
+atrMultSL  = input.float(1.2, "初期逆指値：ATR倍率", step=0.05, group=group_risk)
+atrLen     = input.int(14, "ATR期間", group=group_risk)
+useTrail   = input.bool(false, "トレーリングストップを使用", group=group_risk, tooltip="価格上昇に合わせてSLを切り上げます")
+
+// 3. 表示設定
+group_view = "表示デザイン"
+showLegend = input.bool(true, "凡例パネルを表示", group=group_view)
+legBgCol   = input.color(color.new(color.black, 50), "パネル背景色", group=group_view)
+legTxtCol  = input.color(color.white, "パネル文字色", group=group_view)
+showVWAP   = input.bool(true, "VWAPを表示", group=group_view)
+showLevels = input.bool(true, "TP/SLラインを表示", group=group_view)
+showPre    = input.bool(true, "予告マーカーを表示", group=group_view)
+showDebug  = input.bool(false, "デバッグ（条件ドット）", group="デバッグ")
+
+// ===== データ取得 =====
+prevHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// ===== IB（Initial Balance）算出 =====
+var float ibHigh = na
+var int barsInSession = 0
+newDay = ta.change(time("D")) != 0
+
+if newDay
+    ibHigh := na
+    barsInSession := 0
+else if barstate.isconfirmed
+    barsInSession += 1
+
+if na(ibHigh)
+    ibHigh := high
+
+if barstate.isconfirmed and barsInSession <= ibBars
+    ibHigh := math.max(ibHigh, high)
+
+// ===== エントリー条件ロジック =====
+// 1. 出来高
+volAvg = ta.sma(volume, volLen)
+volOK = volume > volAvg * volMult
+
+// 2. MACD
+[macdLine, sigLine, _] = ta.macd(close, 12, 26, 9)
+bool macdOK = false
+if macdMode == "クロス瞬間の時のみ"
+    macdOK := ta.crossover(macdLine, sigLine)
+else
+    macdOK := macdLine > sigLine 
+
+// 3. VWAP判定（変更点）
+vwapVal = ta.vwap(hlc3)
+// 設定された％分だけ、VWAPより高くないとNGとする
+vwapThreshold = vwapVal * (vwapThPct / 100.0) 
+vwapOK = close > vwapThreshold
+
+// 4. RSI
+rsi = ta.rsi(close, 14)
+rsiOK = rsi > rsiThMin and rsi < rsiThMax
+
+// 5. ブレイク判定
+ibCross = ta.crossover(close, ibHigh)
+ibBreak = barsInSession > ibBars and ibCross
+prevCross = ta.crossover(close, prevHigh)
+prevBreak = usePrevHi ? prevCross : false
+breakOK = ibBreak or prevBreak
+
+// 総合判定
+entryRaw = volOK and macdOK and vwapOK and rsiOK and breakOK
+entryConfirmed = entryRaw and barstate.isconfirmed
+
+// ===== ポジション管理ロジック =====
+var float entryPrice = na
+var float dynamicSL = na
+
+// エントリー処理
+if entryConfirmed and na(entryPrice)
+    entryPrice := close
+    atr = ta.atr(atrLen)
+    dynamicSL := entryPrice - (atr * atrMultSL)
+
+// TP計算
+tp1 = na(entryPrice) ? na : entryPrice * (1 + tp1Pct)
+tp2 = na(entryPrice) ? na : entryPrice * (1 + tp2Pct)
+
+// トレーリングストップ
+if not na(entryPrice) and useTrail
+    atr = ta.atr(atrLen)
+    trailVal = close - (atr * atrMultSL)
+    dynamicSL := math.max(dynamicSL, trailVal)
+
+// 決済判定
+tp1Hit = not na(tp1) and close >= tp1 and barstate.isconfirmed
+tp2Hit = not na(tp2) and close >= tp2 and barstate.isconfirmed
+slHit  = not na(dynamicSL) and close <= dynamicSL and barstate.isconfirmed
+
+// ポジションリセット
+if tp1Hit or tp2Hit or slHit
+    entryPrice := na
+    dynamicSL := na
+
+// ===== プロット処理 =====
+plot(ibHigh, "初動高値(IB)", color=color.new(color.orange, 0))
+plot(usePrevHi ? prevHigh : na, "前日高値", color=color.new(color.purple, 0))
+plot(showVWAP ? vwapVal : na, "VWAP", color=color.new(color.teal, 60))
+
+// SL/TPライン
+plot(showLevels ? tp1 : na, "TP1", color=color.green, style=plot.style_circles)
+plot(showLevels ? tp2 : na, "TP2", color=color.green, style=plot.style_circles)
+plot(showLevels ? dynamicSL : na, "SL", color=color.red, style=plot.style_cross)
+
+// マーカー
+plotshape(showPre and entryRaw, "IN予告", shape.triangleup, location.belowbar, color.new(color.lime, 40), size=size.tiny, text="IN?")
+plotshape(entryConfirmed, "IN確定", shape.triangleup, location.belowbar, color.lime, size=size.large, text="IN")
+plotshape(tp1Hit, "TP1", shape.labeldown, location.abovebar, color.green, textcolor=color.white, text="TP①")
+plotshape(tp2Hit, "TP2", shape.labeldown, location.abovebar, color.green, textcolor=color.white, text="TP②")
+plotshape(slHit, "STOP", shape.labeldown, location.abovebar, color.red, textcolor=color.white, text="STOP")
+
+// ===== 凡例ラベル =====
+var label legend = na
+if showLegend
+    topRef = math.max(nz(ibHigh, high), nz(prevHigh, high), nz(vwapVal, high), high)
+    yPos = topRef + nz(ta.atr(14), ta.tr) * 1.0
+    
+    // VWAPの表示テキストを更新
+    txt = "【凡例】 ✔=OK／—=NG\n" +
+          "Vol条件 : " + f_ck(volOK) + "\n" +
+          "MACD : " + f_ck(macdOK) + "\n" +
+          "VWAP(> " + str.tostring(vwapThPct) + "%) : " + f_ck(vwapOK) + "\n" +
+          "RSI(" + str.tostring(rsiThMin) + "-" + str.tostring(rsiThMax) + ") : " + f_ck(rsiOK) + " (" + f2(rsi) + ")\n" +
+          "ブレイク : " + f_ck(breakOK) + "\n" + 
+          "------------------\n" +
+          "現在値 : " + f2(close) + "\n" + 
+          (na(dynamicSL) ? "" : "SL位置 : " + f2(dynamicSL) + (useTrail ? " (Trail)" : ""))
+
+    if na(legend)
+        legend := label.new(bar_index, yPos, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_right, textcolor=legTxtCol, color=legBgCol, size=size.small)
+    else
+        label.set_x(legend, bar_index)
+        label.set_y(legend, yPos)
+        label.set_text(legend, txt)
+        label.set_color(legend, legBgCol)
+        label.set_textcolor(legend, legTxtCol)
+else
+    label.delete(legend)
+    legend := na
+
+// ===== アラート =====
+alertcondition(entryConfirmed, "1570 IN", "順張りブレイクIN（確定）")
+alertcondition(slHit, "1570 STOP", "ストップロス実行")
