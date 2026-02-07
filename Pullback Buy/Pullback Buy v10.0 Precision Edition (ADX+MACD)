@@ -1,0 +1,226 @@
+//@version=5
+indicator("Pullback Buy v10.0 Precision Edition (ADX+MACD)", overlay=true, scale=scale.right, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. 戦略・感度設定
+// ==========================================
+group_strat = "📊 戦略感度設定"
+
+sensitivity = input.string("Lv07: Normal", "エントリー感度", options=[
+  "Lv01: Crisis Hunter", 
+  "Lv02: Deep Bottom", 
+  "Lv03: Iron Fortress", 
+  "Lv04: Very Safe", 
+  "Lv05: Safe Plus", 
+  "Lv06: Safe", 
+  "Lv07: Normal", 
+  "Lv08: Moderate", 
+  "Lv09: Active", 
+  "Lv10: Aggressive"
+  ], group=group_strat)
+
+// パラメータマッピング
+var float s_zoneMult = na 
+var float s_slMult = na 
+var float s_tp1Mult = na
+
+if sensitivity == "Lv01: Crisis Hunter"
+    s_zoneMult := 3.5, s_slMult := 2.5, s_tp1Mult := 2.0
+else if sensitivity == "Lv02: Deep Bottom"
+    s_zoneMult := 3.0, s_slMult := 2.2, s_tp1Mult := 1.8
+else if sensitivity == "Lv03: Iron Fortress"
+    s_zoneMult := 2.6, s_slMult := 2.0, s_tp1Mult := 1.5
+else if sensitivity == "Lv04: Very Safe"
+    s_zoneMult := 2.3, s_slMult := 1.8, s_tp1Mult := 1.3
+else if sensitivity == "Lv05: Safe Plus"
+    s_zoneMult := 2.0, s_slMult := 1.6, s_tp1Mult := 1.2
+else if sensitivity == "Lv06: Safe"
+    s_zoneMult := 1.8, s_slMult := 1.5, s_tp1Mult := 1.1
+else if sensitivity == "Lv07: Normal"
+    s_zoneMult := 1.5, s_slMult := 1.3, s_tp1Mult := 1.0
+else if sensitivity == "Lv08: Moderate"
+    s_zoneMult := 1.2, s_slMult := 1.1, s_tp1Mult := 0.9
+else if sensitivity == "Lv09: Active"
+    s_zoneMult := 1.0, s_slMult := 0.9, s_tp1Mult := 0.8
+else 
+    s_zoneMult := 0.8, s_slMult := 0.8, s_tp1Mult := 0.7
+
+atrLen = input.int(14, "ATR期間", group=group_strat)
+
+// ==========================================
+// 2. トレンド & フィルター設定 (強化版)
+// ==========================================
+group_trend    = "📈 トレンドフィルター (精度強化)"
+useTrendFilter = input.bool(true, "長期トレンド(EMA200)順張りのみ", group=group_trend)
+trendLen       = input.int(200,   "長期EMA期間", group=group_trend)
+
+// ★ ADXフィルター (New)
+useAdxFilter   = input.bool(true, "ADXフィルターを使用 (レンジ回避)", group=group_trend)
+adxTh          = input.int(20,    "ADXしきい値 (20以上推奨)", group=group_trend)
+
+group_filter   = "🛡️ フィルター条件"
+useRSI         = input.bool(true, "RSIフィルタ (買われすぎ防止)", group=group_filter)
+rsiMin         = input.int(40,    "RSI下限 (これ以上で買い)", group=group_filter)
+rsiMax         = input.int(75,    "RSI上限 (これ以下で買い)", group=group_filter)
+cooldownPB     = input.int(5,     "PB連打防止(本)", group=group_filter)
+touchWindow    = input.int(120,   "ゾーン接触後の有効期間", group=group_filter)
+
+// ==========================================
+// 3. 出来高設定 (Volume Spike)
+// ==========================================
+group_vol      = "🔊 出来高検知 (Volume)"
+volLen         = input.int(20,     "出来高SMA期間", group=group_vol)
+volRatioTh     = input.float(1.5,  "急増倍率しきい値", step=0.1, group=group_vol)
+volNearK       = input.float(0.50, "VWAP近傍判定(ATR倍)", step=0.05, group=group_vol)
+cooldownVol    = input.int(3,      "Vol連打防止(本)", minval=0, group=group_vol)
+
+// ==========================================
+// ★Dual Buy (日足連携) 設定
+// ==========================================
+group_dual     = "🌟 Dual Buy (日足連携)"
+dailyTF        = input.timeframe("D", "長期足（日足）", group=group_dual)
+d_fastLen      = input.int(20, "日足: 短期MA期間", group=group_dual)
+d_slowLen      = input.int(50, "日足: 長期MA期間", group=group_dual)
+
+// ==========================================
+// 4. ビジュアル設定
+// ==========================================
+group_vis    = "🎨 色と表示"
+showZones    = input.bool(true,  "買いゾーン帯を表示", group=group_vis)
+showLines    = input.bool(true,  "TP/SLラインを描画", group=group_vis)
+c_zone       = input.color(color.new(color.green, 90), "ゾーン色", group=group_vis)
+c_sl         = input.color(color.red, "SL色", group=group_vis)
+c_tp         = input.color(color.blue, "TP色", group=group_vis)
+
+// ==========================================
+// 計算ロジック: 基本指標
+// ==========================================
+float vwap_ = ta.vwap(hlc3)
+float atr   = ta.atr(atrLen)
+float rsi   = ta.rsi(close, 14)
+
+// --- トレンド判定 (EMA) ---
+float emaTrend = ta.ema(close, trendLen)
+bool isUptrend = useTrendFilter ? (close > emaTrend) : true
+
+// --- ★ ADX判定 (トレンド強度) ---
+[diplus, diminus, adxValue] = ta.dmi(14, 14)
+bool isAdxStrong = useAdxFilter ? (adxValue >= adxTh) : true
+
+// --- ゾーン計算 ---
+float zoneHi = vwap_ - atr * (s_zoneMult * 0.50) 
+float zoneLo = vwap_ - atr * (s_zoneMult * 1.2) 
+bool  inZone = (low <= zoneHi and high >= zoneLo)
+
+// --- 接触履歴 ---
+var int lastTouch = na
+if inZone
+    lastTouch := bar_index
+bool touchedRecently = not na(lastTouch) and (bar_index - lastTouch <= touchWindow)
+
+// ==========================================
+// 計算ロジック: Pullback Buy (PB)
+// ==========================================
+// A. VWAP上抜け
+bool crossUp = ta.crossover(close, vwap_)
+
+// B. ピンバー（下ヒゲ）
+float bodySize  = math.abs(close - open)
+float lowerWick = math.min(close, open) - low
+bool isPinbar   = (lowerWick > bodySize * 2) and (close > open or (close - low) > (high - close))
+// ピンバー条件: ゾーン内 または VWAP付近
+bool pinbarSignal = (inZone or (math.abs(low - vwap_) < atr * 0.5)) and isPinbar
+
+// エントリー条件（生）
+bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and isUptrend
+
+// RSIフィルター (上限・下限)
+bool rsiOK = useRSI ? (rsi >= rsiMin and rsi <= rsiMax) : true
+
+// 連打防止
+var int lastEntry = na
+bool canEntry = na(lastEntry) or (bar_index - lastEntry >= cooldownPB)
+
+// ==========================================
+// ★ 改良: MACD判定 (12, 26, 9)
+// ==========================================
+[macdLine, macdSig, macdHist] = ta.macd(close, 12, 26, 9)
+
+// 以前: ta.crossover(macdLine, macdSig) -> 点でしか反応しない
+// 今回: ヒストグラムが増加中（モメンタム好転） かつ マイナス圏からの回復 or ゴールデンクロス中
+bool macdImproving = (macdHist > macdHist[1]) and (macdHist[1] < macdHist[2] or macdHist > 0)
+// または、単純にゴールデンクロスしたばかり
+bool macdCross = ta.crossover(macdLine, macdSig)
+
+// MACD総合判定: クロスしたか、ヒストグラムが好転しているか
+bool macdConfirm = macdImproving or macdCross
+
+// ==========================================
+// ★最終PBシグナル (高精度版)
+// ==========================================
+// 条件: 生シグナル + RSI適正 + 連打防止 + MACD好転 + ADXトレンド強度
+bool buySignal = entrySignalRaw and rsiOK and canEntry and macdConfirm and isAdxStrong
+
+if buySignal
+    lastEntry := bar_index
+
+// TP/SL 計算
+float stopLvl = close - atr * s_slMult
+float target1 = close + atr * s_tp1Mult
+
+// ==========================================
+// 計算ロジック: Volume Spike (Vol)
+// ==========================================
+float volMA    = ta.sma(volume, volLen)
+float volRatio = volume / math.max(volMA, 1)
+bool nearVWAP  = math.abs(close - vwap_) <= atr * volNearK
+var int lastVol = na
+bool volBase   = (volRatio >= volRatioTh) and nearVWAP
+bool volSpike = volBase and (na(lastVol) or bar_index - lastVol >= cooldownVol)
+if volSpike
+    lastVol := bar_index
+
+// ★Combo判定
+bool isCombo = buySignal and volSpike
+
+// ==========================================
+// ★Dual Buy 計算 (日足連携)
+// ==========================================
+check_daily_bullish() =>
+    d_fast = ta.sma(close, d_fastLen)
+    d_slow = ta.sma(close, d_slowLen)
+    // 今回の改良: 日足も上昇トレンド確定時のみ (fast > slow)
+    (d_fast > d_slow) and (close > d_fast)
+
+bool isDailyBullish = request.security(syminfo.tickerid, dailyTF, check_daily_bullish())
+bool isDualBuy = buySignal and isDailyBullish
+
+// ==========================================
+// 描画 (Drawing)
+// ==========================================
+plot(vwap_, "VWAP", color=color.blue, linewidth=2)
+plot(useTrendFilter ? emaTrend : na, "Trend EMA", color=color.gray, linewidth=2)
+
+// Zone
+p1 = plot(showZones ? zoneHi : na, "Zone Hi", color=na)
+p2 = plot(showZones ? zoneLo : na, "Zone Lo", color=na)
+fill(p1, p2, color=showZones and inZone ? c_zone : na)
+
+// --- PB Markers ---
+// 表示優先度: Dual > Combo > Normal
+plotshape(isDualBuy, title="★ DUAL BUY", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.black, size=size.normal, text="DUAL\nBUY")
+plotshape(isCombo and not isDualBuy, title="Combo Buy", style=shape.diamond, location=location.belowbar, color=color.yellow, size=size.small, text="Strong", textcolor=color.black)
+plotshape(buySignal and not isDualBuy and not isCombo, title="Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="Buy", textcolor=color.white)
+plotshape(volSpike and not buySignal, title="Vol Spike", style=shape.circle, location=location.abovebar, size=size.tiny, color=color.navy, text="Vol", textcolor=color.navy)
+
+// Lines
+if showLines and buySignal
+    line.new(bar_index, stopLvl, bar_index + 10, stopLvl, color=c_sl, style=line.style_dashed)
+    line.new(bar_index, target1, bar_index + 10, target1, color=c_tp, style=line.style_dotted)
+
+bgcolor(isDualBuy ? color.new(color.lime, 90) : na)
+
+// アラート
+alertcondition(buySignal, "PB v10 Entry", "Precision PB Entry Detected")
+alertcondition(isDualBuy, "★ Dual Buy Alert", "Daily Trend + Intraday PB Detected!")
+alertcondition(volSpike,  "Volume Spike", "High Volume Detected")
