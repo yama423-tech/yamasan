@@ -1,0 +1,100 @@
+//@version=5
+indicator("底値ハンター V3.1 (視認性改善版)", overlay=true, shorttitle="底値ハンターV3.1")
+
+// ==========================================
+// 1. 設定
+// ==========================================
+// 感度設定
+lookback     = input.int(5, "ダイバージェンス判定期間(本)", minval=1)
+rsiLen       = input.int(14, "RSI期間")
+rsiOversold  = input.int(30, "RSI売られすぎライン")
+
+// ボリンジャーバンド
+bbLen        = input.int(20, "ボリンジャーバンド期間")
+bbMult       = input.float(2.0, "バンド偏差(σ)")
+
+// フィルター
+useVol       = input.bool(true, "出来高(セリングクライマックス)判定を使う")
+volMult      = input.float(2.0, "平均出来高の何倍でパニックとみなすか")
+useTrendFilter = input.bool(false, "200EMAより下落中のみ有効にする(逆張り専用化)")
+
+// ==========================================
+// 2. 計算ロジック
+// ==========================================
+// 基本データ
+rsi     = ta.rsi(close, rsiLen)
+[mid, upper, lower] = ta.bb(close, bbLen, bbMult)
+ema200  = ta.ema(close, 200)
+ema5    = ta.ema(close, 5)
+
+// 出来高判定
+volMa   = ta.sma(volume, 20)
+isPanicVol = useVol ? (volume > volMa * volMult) : true
+
+// トレンドフィルター
+trendOk = useTrendFilter ? (close < ema200) : true
+
+// ==========================================
+// 3. 特殊な底打ちパターン検知
+// ==========================================
+
+// A. RSIダイバージェンス
+lowLowest = ta.lowest(low, lookback)
+rsiLowest = ta.lowest(rsi, lookback)
+wasOversold = ta.lowest(rsi, 10) < rsiOversold
+isDiv = (low < low[lookback]) and (rsi > rsi[lookback]) and wasOversold
+
+// B. セリングクライマックス
+float body = math.abs(close - open)
+float wick = math.min(close, open) - low
+bool isPinbar = wick > body * 1.5 
+bool isCrash  = (low < lower) and isPanicVol and isPinbar
+
+// ==========================================
+// 4. エントリートリガー
+// ==========================================
+cross5EMA = ta.crossover(close, ema5)
+
+// パターン1: ダイバージェンス
+buyDiv = isDiv and cross5EMA and trendOk
+
+// パターン2: クラッシュ(セリングクライマックス)
+buyCrash = isCrash and close > open 
+
+// パターン3: 安全圏回復 (V2ロジック)
+buyRecovery = wasOversold and cross5EMA and rsi > rsiOversold and trendOk
+
+// 統合シグナル
+var int lastBuy = 0
+bool signal = (buyDiv or buyCrash or buyRecovery) and (bar_index - lastBuy > 3)
+
+if signal
+    lastBuy := bar_index
+
+// ==========================================
+// 5. 描画 (視認性を変更)
+// ==========================================
+
+// バンド描画
+p1 = plot(upper, "Upper", color=color.new(color.red, 90))
+p2 = plot(lower, "Lower", color=color.new(color.blue, 90))
+fill(p1, p2, color=color.new(color.gray, 95))
+plot(mid, "20 SMA", color=color.orange, linewidth=1)
+plot(ema5, "5 EMA", color=color.aqua, linewidth=2)
+
+// --- シグナル描画の変更点 ---
+
+// 1. パニック買い (旧:水色ひし形 -> 新:紫ラベル)
+// 明確な「底」として目立たせます
+plotshape(buyCrash, title="Panic Buy", location=location.belowbar, color=color.purple, style=shape.labelup, size=size.normal, text="BOTTOM", textcolor=color.white)
+
+// 2. ダイバージェンス買い (変更なし:オレンジラベル)
+// 一番信頼できるサイン
+plotshape(buyDiv and not buyCrash, title="Div Buy", location=location.belowbar, color=color.orange, style=shape.labelup, size=size.normal, text="Div\nBUY", textcolor=color.white)
+
+// 3. 安全圏回復 (旧:緑三角 -> 新:白丸)
+// Pullback Buyの「緑三角」と被らないように白丸に変更
+plotshape(buyRecovery and not buyDiv and not buyCrash, title="Recovery Buy", location=location.belowbar, color=color.white, style=shape.circle, size=size.small, text="", textcolor=color.black)
+
+// アラート
+alertcondition(signal, "底値ハンター・エントリー", "底打ちからの反転シグナル点灯！")
