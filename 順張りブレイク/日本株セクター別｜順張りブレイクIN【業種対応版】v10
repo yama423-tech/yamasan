@@ -1,0 +1,212 @@
+//@version=6
+indicator("日本株セクター別｜順張りブレイクIN【業種対応版】v10", overlay=true)
+
+// ===== ユーティリティ =====
+f_ck(cond) => cond ? "✔" : "—"
+f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
+
+// ===== 1. 業種・セクター選択 =====
+group_sec = "セクター選択"
+sectorInput = input.string("Manual (手動設定)", "ターゲット業種", options=[
+  "Manual (手動設定)", 
+  "Mega Bank (メガバンク)", "Regional Bank (地銀)", 
+  "Semicon (半導体)", "High Tech (ハイテク)", 
+  "Marine (海運)", "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", 
+  "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)", "Real Estate (不動産)", 
+  "Construction (建設)", "Transportation (運輸)", "Consumer (生活用品)", 
+  "Consulting (コンサル)", "Resources (金/銀/資源)", 
+  "Index N225 (日経平均)", "Index NASDAQ", "ETH/JPY (イーサリアム)"], group=group_sec)
+
+// 手動設定用パラメータ（Manual選択時のみ有効）
+group_man = "手動設定パラメータ (Manual選択時)"
+man_FastLen = input.int(12, "MACD Fast", group=group_man)
+man_SlowLen = input.int(26, "MACD Slow", group=group_man)
+man_AdxTh   = input.int(20, "ADX閾値", group=group_man)
+man_SlMult  = input.float(2.0, "SL ATR倍率", group=group_man)
+man_TpMult  = input.float(1.5, "TP ATR倍率", group=group_man) // TP1用
+man_UseVol  = input.bool(true, "出来高判定を使う", group=group_man)
+
+// ===== 2. ロジック変数の自動マッピング =====
+// [Fast, Slow, ADX_Th, SL_Mult, TP_Mult, Use_Vol]
+[p_fastLen, p_slowLen, p_adxTh, p_slMult, p_tp1Mult, p_useVol] = switch sectorInput
+    // --- 金融 ---
+    "Mega Bank (メガバンク)"    => [12, 26, 20, 2.0, 1.5, true]
+    "Regional Bank (地銀)"      => [14, 30, 18, 2.5, 1.8, false] // 板薄対応：出来高無視
+
+    // --- テック・高ボラティリティ ---
+    "Semicon (半導体)"          => [9,  21, 24, 2.5, 2.0, true]  // 高速反応・広めのストップ
+    "High Tech (ハイテク)"      => [9,  21, 23, 2.2, 1.2, true]
+    "ETH/JPY (イーサリアム)"    => [10, 20, 25, 3.5, 4.0, true]
+
+    // --- 景気敏感・輸出 ---
+    "Marine (海運)"             => [10, 25, 25, 3.0, 3.0, true]  // 超高ボラティリティ
+    "Automotive (自動車)"       => [13, 26, 20, 2.0, 1.5, true]
+    "Manufacturing (製造)"      => [13, 26, 18, 2.0, 1.5, true]
+    "Trading (商社)"            => [12, 26, 25, 2.0, 2.0, true]
+
+    // --- 内需・ディフェンシブ ---
+    "Pharma (医薬品)"           => [15, 30, 18, 1.8, 1.4, true]  // ダマシ回避
+    "Retail (小売)"             => [12, 24, 20, 2.0, 1.5, false] // 出来高緩和
+    "Utility (電力/ガス)"       => [15, 35, 18, 1.8, 1.2, true]  // 長期トレンド
+    "Real Estate (不動産)"      => [14, 30, 18, 2.0, 1.6, true]
+    "Construction (建設)"       => [15, 35, 18, 1.8, 1.2, true]
+    "Transportation (運輸)"     => [13, 28, 20, 2.2, 1.8, true]
+    "Consumer (生活用品)"       => [14, 30, 15, 1.8, 1.2, true]
+
+    // --- その他・指数 ---
+    "Consulting (コンサル)"     => [12, 25, 22, 2.3, 1.8, true]
+    "Resources (金/銀/資源)"    => [14, 28, 20, 2.0, 2.5, true]
+    "Index N225 (日経平均)"     => [12, 26, 20, 2.0, 1.5, true]
+    "Index NASDAQ"              => [10, 24, 22, 2.2, 2.0, true]
+    
+    // --- デフォルト ---
+    => [man_FastLen, man_SlowLen, man_AdxTh, man_SlMult, man_TpMult, man_UseVol]
+
+// ===== その他の固定/共通パラメータ =====
+group_common = "共通設定"
+volMult   = input.float(2.0, "出来高倍率（Vol有効時）", group=group_common)
+ibBars    = input.int(4, "初動計測本数（IB）", minval=2, maxval=8, group=group_common)
+vwapThPct = input.float(100.0, "VWAP判定比率(%)", step=0.1, group=group_common)
+useTrail  = input.bool(false, "トレーリングストップを使用", group=group_common)
+
+// 表示設定
+group_view = "表示デザイン"
+showLegend = input.bool(true, "情報パネルを表示", group=group_view)
+legPos     = input.string("Top Right", "パネル位置", options=["Top Right", "Bottom Right", "Bottom Left"], group=group_view)
+
+// ===== データ取得と計算 =====
+// 1. VWAP & IB
+vwapVal = ta.vwap(hlc3)
+prevHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+var float ibHigh = na
+var int barsInSession = 0
+newDay = ta.change(time("D")) != 0
+
+if newDay
+    ibHigh := na
+    barsInSession := 0
+else if barstate.isconfirmed
+    barsInSession += 1
+
+if na(ibHigh)
+    ibHigh := high
+if barstate.isconfirmed and barsInSession <= ibBars
+    ibHigh := math.max(ibHigh, high)
+
+// 2. テクニカル指標計算（動的パラメータ使用）
+// Vol
+volAvg = ta.sma(volume, 60)
+volCond = p_useVol ? (volume > volAvg * volMult) : true // useVolがfalseなら常にtrue
+
+// MACD
+[macdLine, sigLine, _] = ta.macd(close, p_fastLen, p_slowLen, 9)
+macdOK = macdLine > sigLine
+
+// ADX (New!)
+[diplus, diminus, adxVal] = ta.dmi(14, 14)
+adxOK = adxVal > p_adxTh
+
+// VWAP
+vwapOK = close > vwapVal * (vwapThPct / 100.0)
+
+// ブレイク
+ibBreak = barsInSession > ibBars and ta.crossover(close, ibHigh)
+prevBreak = ta.crossover(close, prevHigh)
+breakOK = ibBreak or prevBreak
+
+// ===== 総合エントリー判定 =====
+// ADXを追加してフィルタリング強化
+entryRaw = volCond and macdOK and vwapOK and adxOK and breakOK
+entryConfirmed = entryRaw and barstate.isconfirmed
+
+// ===== ポジション管理（ATRベース） =====
+var float entryPrice = na
+var float dynamicSL = na
+
+atr = ta.atr(14)
+
+if entryConfirmed and na(entryPrice)
+    entryPrice := close
+    // セクターごとのSL倍率を使用
+    dynamicSL := entryPrice - (atr * p_slMult)
+    alert("【ENTRY】" + syminfo.ticker + " (" + sectorInput + ") 価格:" + str.tostring(close), alert.freq_once_per_bar_close)
+
+// TP計算 (セクターごとの倍率を使用)
+tp1 = na(entryPrice) ? na : entryPrice + (atr * p_tp1Mult)
+// TP2はTP1の1.5倍の幅とする
+tp2 = na(entryPrice) ? na : entryPrice + (atr * p_tp1Mult * 1.5)
+
+// トレーリング
+if not na(entryPrice) and useTrail
+    trailVal = close - (atr * p_slMult)
+    dynamicSL := math.max(dynamicSL, trailVal)
+
+// 決済判定
+tp1Hit = not na(tp1) and close >= tp1 and barstate.isconfirmed
+tp2Hit = not na(tp2) and close >= tp2 and barstate.isconfirmed
+slHit  = not na(dynamicSL) and close <= dynamicSL and barstate.isconfirmed
+
+// アラートとリセット
+if tp1Hit
+    alert("【TP1 利確】" + syminfo.ticker + " 価格:" + str.tostring(close), alert.freq_once_per_bar_close)
+if tp2Hit
+    alert("【TP2 利確】" + syminfo.ticker + " 価格:" + str.tostring(close), alert.freq_once_per_bar_close)
+if slHit
+    alert("【STOP 損切】" + syminfo.ticker + " 価格:" + str.tostring(close), alert.freq_once_per_bar_close)
+
+if tp1Hit or tp2Hit or slHit
+    entryPrice := na
+    dynamicSL := na
+
+// ===== プロット =====
+plot(ibHigh, "IB High", color=color.new(color.orange, 0))
+plot(vwapVal, "VWAP", color=color.new(color.teal, 60))
+
+plot(tp1, "TP1", color=color.green, style=plot.style_circles)
+plot(dynamicSL, "SL", color=color.red, style=plot.style_cross)
+
+if entryConfirmed
+    label.new(bar_index, low, text="IN: " + sectorInput + "\nTarget:" + f2(tp1), color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+
+plotshape(tp1Hit, "TP1", shape.labeldown, location.abovebar, color.green, textcolor=color.white, text="TP①")
+plotshape(slHit, "STOP", shape.labeldown, location.abovebar, color.red, textcolor=color.white, text="STOP")
+
+// ===== 情報パネル (セクター情報追加) =====
+var table panel = na
+posInput = legPos == "Top Right" ? position.top_right : legPos == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+if showLegend
+    if barstate.isfirst
+        panel := table.new(posInput, 2, 8, bgcolor=color.new(color.black, 40), border_width=1)
+    
+    if barstate.islast
+        // ヘッダー：選択中セクター
+        table.cell(panel, 0, 0, "Mode", text_color=color.yellow, text_halign=text.align_left)
+        // 長い文字列を短縮表示するための簡易処理
+        dispSec = str.replace(sectorInput, " (", "\n(")
+        table.cell(panel, 1, 0, dispSec, text_color=color.yellow, text_size=size.small)
+
+        table.cell(panel, 0, 1, "Vol Check", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 1, p_useVol ? (volCond ? "✔OK" : "NG") : "OFF", text_color = (not p_useVol or volCond) ? color.green : color.red)
+        
+        table.cell(panel, 0, 2, "MACD (" + str.tostring(p_fastLen) + "/" + str.tostring(p_slowLen) + ")", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 2, f_ck(macdOK), text_color = macdOK ? color.green : color.red)
+
+        table.cell(panel, 0, 3, "ADX (>" + str.tostring(p_adxTh) + ")", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 3, f2(adxVal) + (adxOK ? " ✔" : ""), text_color = adxOK ? color.green : color.red)
+        
+        table.cell(panel, 0, 4, "VWAP Break", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 4, f_ck(vwapOK), text_color = vwapOK ? color.green : color.red)
+
+        table.cell(panel, 0, 5, "Breakout", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 5, f_ck(breakOK), text_color = breakOK ? color.green : color.red)
+
+        // リスク設定表示
+        table.cell(panel, 0, 6, "Risk Set", text_color=color.gray, text_halign=text.align_left)
+        table.cell(panel, 1, 6, "TP:" + str.tostring(p_tp1Mult) + " / SL:" + str.tostring(p_slMult), text_color=color.gray, text_size=size.small)
+        
+        // ポジション
+        posText = na(dynamicSL) ? "No Pos" : "SL: " + f2(dynamicSL)
+        table.cell(panel, 0, 7, "Close: " + f2(close), text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 7, posText, text_color=color.white)
