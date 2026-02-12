@@ -1,0 +1,210 @@
+//@version=6
+indicator("日本株セクター別｜順張りブレイクIN【日足/デイトレ自動切替】v12", overlay=true)
+
+// ===== ユーティリティ =====
+f_ck(cond) => cond ? "✔" : "—"
+f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
+
+// ===== 1. 業種・セクター選択 =====
+group_sec = "セクター選択"
+sectorInput = input.string("Manual (手動設定)", "ターゲット業種", options=[
+  "Manual (手動設定)", 
+  "Mega Bank (メガバンク)", "Regional Bank (地銀)", 
+  "Semicon (半導体)", "High Tech (ハイテク)", 
+  "Marine (海運)", "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", 
+  "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)", "Real Estate (不動産)", 
+  "Construction (建設)", "Transportation (運輸)", "Consumer (生活用品)", 
+  "Consulting (コンサル)", "Resources (金/銀/資源)", 
+  "Index N225 (日経平均)", "Index NASDAQ", "ETH/JPY (イーサリアム)"], group=group_sec)
+
+// 手動設定パラメータ
+group_man = "手動設定パラメータ (Manual選択時)"
+man_FastLen = input.int(12, "MACD Fast", group=group_man)
+man_SlowLen = input.int(26, "MACD Slow", group=group_man)
+man_AdxTh   = input.int(20, "ADX閾値", group=group_man)
+man_SlMult  = input.float(2.0, "SL ATR倍率", group=group_man)
+man_TpMult  = input.float(1.5, "TP ATR倍率", group=group_man)
+man_UseVol  = input.bool(true, "出来高判定を使う", group=group_man)
+
+// ===== 2. 過熱感ガード設定 =====
+group_filter = "★過熱感・高値掴み防止"
+useRsiFilter = input.bool(true, "RSI過熱ガードを使う", group=group_filter)
+rsiMax       = input.int(80, "RSI上限 (日足用に緩和)", minval=50, maxval=100, group=group_filter) // 日足トレンド用に少し緩和(75->80)
+useDispFilter= input.bool(true, "乖離率ガードを使う", group=group_filter)
+dispMax      = input.float(15.0, "25日線乖離率上限(%)", step=0.5, group=group_filter) // 大型株の強力トレンド用に緩和(10->15)
+adxMax       = input.int(65, "ADX過熱上限", group=group_filter)
+
+// ===== 3. ロジック自動マッピング =====
+[p_fastLen, p_slowLen, p_adxTh, p_slMult, p_tp1Mult, p_useVol] = switch sectorInput
+    "Mega Bank (メガバンク)"    => [12, 26, 20, 2.0, 1.5, true]
+    "Regional Bank (地銀)"      => [14, 30, 18, 2.5, 1.8, false]
+    "Semicon (半導体)"          => [9,  21, 24, 2.5, 2.0, true]
+    "High Tech (ハイテク)"      => [9,  21, 23, 2.2, 1.2, true]
+    "ETH/JPY (イーサリアム)"    => [10, 20, 25, 3.5, 4.0, true]
+    "Marine (海運)"             => [10, 25, 25, 3.0, 3.0, true]
+    "Automotive (自動車)"       => [13, 26, 20, 2.0, 1.5, true]
+    "Manufacturing (製造)"      => [13, 26, 18, 2.0, 1.5, true]
+    "Trading (商社)"            => [12, 26, 25, 2.0, 2.0, true]
+    "Pharma (医薬品)"           => [15, 30, 18, 1.8, 1.4, true]
+    "Retail (小売)"             => [12, 24, 20, 2.0, 1.5, false]
+    "Utility (電力/ガス)"       => [15, 35, 18, 1.8, 1.2, true]
+    "Real Estate (不動産)"      => [14, 30, 18, 2.0, 1.6, true]
+    "Construction (建設)"       => [15, 35, 18, 1.8, 1.2, true]
+    "Transportation (運輸)"     => [13, 28, 20, 2.2, 1.8, true]
+    "Consumer (生活用品)"       => [14, 30, 15, 1.8, 1.2, true]
+    "Consulting (コンサル)"     => [12, 25, 22, 2.3, 1.8, true]
+    "Resources (金/銀/資源)"    => [14, 28, 20, 2.0, 2.5, true]
+    "Index N225 (日経平均)"     => [12, 26, 20, 2.0, 1.5, true]
+    "Index NASDAQ"              => [10, 24, 22, 2.2, 2.0, true]
+    => [man_FastLen, man_SlowLen, man_AdxTh, man_SlMult, man_TpMult, man_UseVol]
+
+// ===== 共通設定 =====
+group_common = "共通設定"
+isIntraday = timeframe.isintraday // デイトレかどうか自動判定
+donchianLen = input.int(20, "日足用：高値ブレイク期間(日)", group=group_common, tooltip="日足の時だけ使われます。過去20日間の最高値を更新したらIN")
+ibBars    = input.int(4, "デイトレ用：初動計測本数", minval=2, maxval=8, group=group_common)
+vwapThPct = input.float(100.0, "VWAP判定比率(%)", step=0.1, group=group_common)
+useTrail  = input.bool(true, "トレーリングストップを使用", group=group_common) // 日足ならTrail推奨なのでDefault Trueへ
+
+// 表示設定
+showLegend = input.bool(true, "情報パネルを表示", group="表示デザイン")
+legPos     = input.string("Bottom Left", "パネル位置", options=["Top Right", "Bottom Right", "Bottom Left"], group="表示デザイン")
+
+// ===== ロジック分岐：日足 vs デイトレ =====
+
+// A. 基準となる高値ライン (Resistance Line) の計算
+var float resLine = na // レジスタンスライン
+
+if isIntraday
+    // --- デイトレ用ロジック (IB Breakout) ---
+    newDay = ta.change(time("D")) != 0
+    var int barsInSession = 0
+    var float ibHigh = na
+    
+    if newDay
+        ibHigh := na
+        barsInSession := 0
+    else if barstate.isconfirmed
+        barsInSession += 1
+    
+    if na(ibHigh)
+        ibHigh := high
+    if barstate.isconfirmed and barsInSession <= ibBars
+        ibHigh := math.max(ibHigh, high)
+    
+    // IB期間が終わったらラインを確定
+    if barsInSession > ibBars
+        resLine := ibHigh
+    else
+        resLine := na // IB計測中はラインなし
+else
+    // --- 日足・スイング用ロジック (Donchian Breakout) ---
+    // 過去N日間の最高値（当日を含まない）
+    resLine := ta.highest(high, donchianLen)[1]
+
+// ===== データ取得と計算 =====
+// VWAP (日足では一日の平均価格として機能、デイトレでは積算)
+vwapVal = ta.vwap(hlc3)
+
+// テクニカル指標
+volAvg = ta.sma(volume, 60)
+volCond = p_useVol ? (volume > volAvg * 1.5) : true // 倍率少し緩和
+
+[macdLine, sigLine, _] = ta.macd(close, p_fastLen, p_slowLen, 9)
+macdOK = macdLine > sigLine
+
+[diplus, diminus, adxVal] = ta.dmi(14, 14)
+adxOK = adxVal > p_adxTh and adxVal < adxMax 
+
+vwapOK = close > vwapVal * (vwapThPct / 100.0)
+
+// 過熱感フィルター
+rsiVal = ta.rsi(close, 14)
+rsiSafe = useRsiFilter ? (rsiVal < rsiMax) : true
+
+sma25 = ta.sma(close, 25)
+dispVal = ((close - sma25) / sma25) * 100
+dispSafe = useDispFilter ? (dispVal < dispMax) : true
+
+// ブレイク判定 (共通)
+// レジスタンスラインが存在し、かつ終値でそれを超えたらブレイク
+breakOK = not na(resLine) and close > resLine and close[1] <= resLine[1]
+
+// ===== 総合エントリー判定 =====
+entryRaw = volCond and macdOK and vwapOK and adxOK and rsiSafe and dispSafe and breakOK
+entryConfirmed = entryRaw and barstate.isconfirmed
+
+// ===== ポジション管理（ATRベース） =====
+var float entryPrice = na
+var float dynamicSL = na
+atr = ta.atr(14)
+
+if entryConfirmed and na(entryPrice)
+    entryPrice := close
+    dynamicSL := entryPrice - (atr * p_slMult)
+    alert("【ENTRY】" + syminfo.ticker + " 価格:" + str.tostring(close), alert.freq_once_per_bar_close)
+
+tp1 = na(entryPrice) ? na : entryPrice + (atr * p_tp1Mult)
+// 日足トレンドは大きく伸びるのでTP2を少し遠くに
+tp2 = na(entryPrice) ? na : entryPrice + (atr * p_tp1Mult * 2.0)
+
+if not na(entryPrice) and useTrail
+    trailVal = close - (atr * p_slMult)
+    dynamicSL := math.max(dynamicSL, trailVal)
+
+tp1Hit = not na(tp1) and close >= tp1 and barstate.isconfirmed
+tp2Hit = not na(tp2) and close >= tp2 and barstate.isconfirmed
+slHit  = not na(dynamicSL) and close <= dynamicSL and barstate.isconfirmed
+
+if tp1Hit or tp2Hit or slHit
+    entryPrice := na
+    dynamicSL := na
+
+// ===== プロット =====
+// レジスタンスライン（ブレイク基準線）の描画
+plot(resLine, "Break Line", color=color.new(color.orange, 0), linewidth=2)
+plot(vwapVal, "VWAP", color=color.new(color.teal, 80)) // 薄く表示
+
+plot(tp1, "TP1", color=color.green, style=plot.style_circles)
+plot(dynamicSL, "SL", color=color.red, style=plot.style_cross)
+
+if entryConfirmed
+    label.new(bar_index, low, text="IN: " + sectorInput + "\nTarget:" + f2(tp1), color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+
+plotshape(tp1Hit, "TP1", shape.labeldown, location.abovebar, color.green, textcolor=color.white, text="TP①")
+plotshape(slHit, "STOP", shape.labeldown, location.abovebar, color.red, textcolor=color.white, text="STOP")
+
+// ===== パネル表示 =====
+var table panel = na
+posInput = legPos == "Top Right" ? position.top_right : legPos == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+if showLegend
+    if barstate.isfirst
+        panel := table.new(posInput, 2, 8, bgcolor=color.new(color.black, 40), border_width=1)
+    
+    if barstate.islast
+        modeStr = isIntraday ? "DayTrade (IB)" : "Swing (Daily)"
+        
+        table.cell(panel, 0, 0, "Mode: " + modeStr, text_color=color.yellow, text_halign=text.align_left)
+        table.cell(panel, 1, 0, "v12 Hybrid", text_color=color.yellow, text_size=size.small)
+
+        table.cell(panel, 0, 1, "Vol Check", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 1, p_useVol ? (volCond ? "✔" : "NG") : "OFF", text_color = (not p_useVol or volCond) ? color.green : color.red)
+        
+        table.cell(panel, 0, 2, "Trend (ADX/MACD)", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 2, (adxOK and macdOK) ? "✔" : "NG", text_color = (adxOK and macdOK) ? color.green : color.red)
+
+        // ガード状況
+        table.cell(panel, 0, 3, "Guard (RSI/Disp)", text_color=color.white, text_halign=text.align_left)
+        guardOK = rsiSafe and dispSafe
+        table.cell(panel, 1, 3, guardOK ? "Safe" : "⚠STOP", text_color = guardOK ? color.green : color.red)
+
+        // ブレイク判定
+        lineVal = na(resLine) ? "---" : f2(resLine)
+        table.cell(panel, 0, 4, "Break Line", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 4, lineVal + (breakOK ? " !!BREAK!!" : ""), text_color = breakOK ? color.green : color.white)
+        
+        // 現在のポジション
+        posText = na(dynamicSL) ? "No Pos" : "SL: " + f2(dynamicSL)
+        table.cell(panel, 0, 5, "Close: " + f2(close), text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 5, posText, text_color=color.white)
