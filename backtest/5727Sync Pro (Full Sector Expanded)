@@ -44,6 +44,13 @@ man_AdxTh   = input.int(20,  "ADX 閾値", group=groupMan)
 man_SlMult  = input.float(2.0, "SL ATR倍率", step=0.1, group=groupMan)
 man_Tp1Mult = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupMan)
 
+// --- 精度向上オプション ---
+groupPrec = "精度向上フィルター"
+usePreciseEntry = input.bool(true, "IN精度フィルターを有効", group=groupPrec)
+useAdaptiveRisk = input.bool(true, "TP/SL自動最適化を有効", group=groupPrec)
+rsiCeiling = input.int(68, "買い上限RSI", minval=55, maxval=85, group=groupPrec)
+beTriggerR = input.float(0.8, "建値移動トリガー(R倍)", minval=0.2, step=0.1, group=groupPrec)
+
 //=============================================================================
 // 3. ロジック変数の自動マッピング (大幅拡充)
 //=============================================================================
@@ -107,7 +114,15 @@ volOk = not p_useVol or (volume > volMa)
 trendUp = emaFast > emaSlow and price > emaFast 
 adxOk   = adx > p_adxTh
 rsiOk   = rsi > 50
-fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
+
+// IN精度向上: EMA傾き + ADX改善 + RSI天井抑制 + 再押し目許容
+emaSlopeUp = emaFast > emaFast[1]
+adxImproving = adx > adx[1]
+rsiNotOverheat = rsi < rsiCeiling
+pullbackEntry = low <= emaFast and close >= emaFast
+preciseOk = not usePreciseEntry or (emaSlopeUp and adxImproving and rsiNotOverheat and pullbackEntry)
+
+fireBuyRaw = trendUp and adxOk and rsiOk and volOk and preciseOk and inDateRange()
 
 isLong = strategy.position_size > 0
 fireBuy = fireBuyRaw and not isLong
@@ -126,7 +141,15 @@ if fireBuy
     strategy.entry("BUY", strategy.long, comment= "Long")
     entryPx   := close
     slPrice   := close - (atr * p_slMult)
-    tp1Price  := close + (atr * p_tp1Mult)
+
+    // SL精度向上: ATRと直近スイング安値を併用してノイズ損切りを軽減
+    swingLow = ta.lowest(low, 5)
+    atrStop = close - (atr * p_slMult)
+    slPrice := math.min(atrStop, swingLow)
+
+    // TP精度向上: ADX強度に応じて利確幅を可変化
+    dynTpMult = useAdaptiveRisk ? p_tp1Mult * (adx > (p_adxTh + 5) ? 1.2 : adx < p_adxTh ? 0.9 : 1.0) : p_tp1Mult
+    tp1Price  := close + (atr * dynTpMult)
     tp1Executed := false
 
 // エグジット & トレーリング
@@ -135,6 +158,11 @@ if isLong
     
     // 改良点: 高ボラティリティ銘柄（半導体、海運）をアグレッシブトレール対象に追加
     bool aggressiveTrail = (sectorInput == "ETH/JPY (イーサリアム)" or sectorInput == "High Tech (ハイテク)" or sectorInput == "Index NASDAQ" or sectorInput == "Consulting (コンサル)" or sectorInput == "Semicon (半導体)" or sectorInput == "Marine (海運)")
+
+    // 建値移動: 含み益が一定Rに達したら損切りを建値超えへ
+    riskR = entryPx - slPrice
+    if useAdaptiveRisk and riskR > 0 and close >= entryPx + (riskR * beTriggerR)
+        slPrice := math.max(slPrice, entryPx + (atr * 0.05))
 
     if tp1Executed
         slPrice := math.max(slPrice, proposedSL)
@@ -174,6 +202,9 @@ if barstate.islast
     // ADX
     table.cell(statusTable, 0, 2, "ADX (Th)", bgcolor=color.gray)
     table.cell(statusTable, 1, 2, str.tostring(adx, "#.#") + " (" + str.tostring(p_adxTh) + ")", bgcolor=adx>p_adxTh ? color.green : color.black, text_color=color.white)
+
+    table.cell(statusTable, 0, 4, "IN精度", bgcolor=color.gray)
+    table.cell(statusTable, 1, 4, preciseOk ? "ON" : "WAIT", bgcolor=preciseOk ? color.new(color.green, 20) : color.new(color.orange, 20), text_color=color.white)
 
     // 損益
     pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
