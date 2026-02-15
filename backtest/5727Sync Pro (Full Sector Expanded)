@@ -28,13 +28,13 @@ sectorInput = input.string("Mega Bank (メガバンク)", "ターゲットを選
 // 2. パラメーター設定
 //=============================================================================
 groupTime = "バックテスト期間"
-useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
-startYear = input.int(2023,   "開始 年", group=groupTime)
-startMo   = input.int(1,      "開始 月", group=groupTime)
-startDy   = input.int(1,      "開始 日", group=groupTime)
-endYear   = input.int(2030,   "終了 年", group=groupTime)
-endMo     = input.int(12,     "終了 月", group=groupTime)
-endDy     = input.int(31,     "終了 日", group=groupTime)
+testYears = 3
+
+// --- スイング運用設定 ---
+groupSwing       = "スイング設定"
+swingMinAdx      = input.int(16, "ADX 閾値（スイング）", minval=8, maxval=35, group=groupSwing)
+swingRsiFloor    = input.int(48, "買い下限RSI", minval=35, maxval=60, group=groupSwing)
+swingTrailFactor = input.float(1.2, "トレーリング係数", minval=0.8, maxval=2.5, step=0.1, group=groupSwing)
 
 // --- 手動設定用パラメーター ---
 groupMan    = "手動/その他用 設定"
@@ -76,15 +76,17 @@ man_Tp1Mult = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupMan)
     // --- その他・指数 ---
     "Consulting (コンサル)"     => [12, 25, 22, 2.3, 1.8, true]
     "Resources (金/銀/資源)"    => [14, 28, 20, 2.0, 2.5, true]
-    "Index N225 (日経平均)"     => [12, 26, 20, 2.0, 1.5, true]
-    "Index NASDAQ"              => [10, 24, 22, 2.2, 2.0, true]
+    "Index N225 (日経平均)"     => [20, 50, 16, 2.8, 3.5, false]
+    "Index NASDAQ"              => [18, 45, 18, 3.0, 3.8, false]
     
     // --- デフォルト ---
     => [man_FastLen, man_SlowLen, man_AdxTh, man_SlMult, man_Tp1Mult, true] 
 
 // 期間判定
 inDateRange() =>
-    not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
+    int endTs = timenow
+    int startTs = timestamp(syminfo.timezone, year(endTs) - testYears, month(endTs), dayofmonth(endTs), 0, 0)
+    time >= startTs and time <= endTs
 
 //=============================================================================
 // 4. インジケーター計算
@@ -104,9 +106,9 @@ volOk = not p_useVol or (volume > volMa)
 //=============================================================================
 // 5. シグナル & トレード管理
 //=============================================================================
-trendUp = emaFast > emaSlow and price > emaFast 
-adxOk   = adx > p_adxTh
-rsiOk   = rsi > 50
+trendUp = emaFast > emaSlow and price > emaFast
+adxOk   = adx > math.min(p_adxTh, swingMinAdx)
+rsiOk   = rsi > swingRsiFloor
 fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
 
 isLong = strategy.position_size > 0
@@ -131,7 +133,7 @@ if fireBuy
 
 // エグジット & トレーリング
 if isLong
-    float proposedSL = high - (atr * p_slMult)
+    float proposedSL = high - (atr * p_slMult * swingTrailFactor)
     
     // 改良点: 高ボラティリティ銘柄（半導体、海運）をアグレッシブトレール対象に追加
     bool aggressiveTrail = (sectorInput == "ETH/JPY (イーサリアム)" or sectorInput == "High Tech (ハイテク)" or sectorInput == "Index NASDAQ" or sectorInput == "Consulting (コンサル)" or sectorInput == "Semicon (半導体)" or sectorInput == "Marine (海運)")
