@@ -3,7 +3,7 @@ strategy("WTP20 Replica Strategy [銘柄分析] v2", overlay=true, initial_capit
 
 // --- 1) 業種プリセット ---
 group_sector = "業種プリセット"
-sectorPreset = input.string("Mega Bank (メガバンク)", "ターゲット業種", options=["Mega Bank (メガバンク)", "Semicon (半導体)", "Marine (海運)", "Trading (商社)", "Pharma (医薬品)", "Utility (電力/ガス)", "Index N225 (日経平均)", "Index NASDAQ", "Manual (手動設定)"], group=group_sector)
+sectorPreset = input.string("Manual (手動設定)", "ターゲット業種", options=["Manual (手動設定)", "Mega Bank (メガバンク)", "Regional Bank (地銀)", "Semicon (半導体)", "High Tech (ハイテク)", "Marine (海運)", "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)", "Real Estate (不動産)", "Construction (建設)", "Transportation (運輸)", "Consumer (生活用品)", "Consulting (コンサル)", "Resources (金/銀/資源)", "Index N225 (日経平均)", "Index NASDAQ", "ETH/JPY (イーサリアム)"], group=group_sector)
 
 // 手動設定
 group_manual = "手動設定 (Manual)"
@@ -19,25 +19,49 @@ man_vol = input.float(1.2, "出来高倍率", step=0.1, group=group_manual)
 
 [fastLen, midLen, slowLen, rsiBuy, rsiMax, adxTh, slAtrMult, tpAtrMult, volMult] = switch sectorPreset
     "Mega Bank (メガバンク)"   => [20, 50, 120, 54, 74, 19, 2.0, 2.8, 1.1]
+    "Regional Bank (地銀)"     => [22, 55, 130, 53, 73, 18, 2.3, 2.9, 1.0]
     "Semicon (半導体)"         => [12, 30, 80, 56, 78, 24, 2.6, 3.8, 1.3]
+    "High Tech (ハイテク)"      => [14, 34, 90, 56, 79, 23, 2.5, 3.6, 1.2]
     "Marine (海運)"            => [15, 35, 90, 55, 76, 23, 2.8, 3.6, 1.2]
+    "Automotive (自動車)"      => [18, 45, 110, 54, 75, 20, 2.2, 3.0, 1.1]
+    "Manufacturing (製造)"     => [19, 46, 115, 54, 74, 19, 2.1, 2.9, 1.1]
     "Trading (商社)"           => [18, 45, 110, 54, 75, 21, 2.3, 3.1, 1.2]
     "Pharma (医薬品)"          => [22, 55, 130, 53, 72, 18, 1.9, 2.6, 1.0]
+    "Retail (小売)"            => [20, 48, 120, 54, 74, 19, 2.0, 2.8, 1.0]
     "Utility (電力/ガス)"      => [24, 60, 140, 52, 70, 17, 1.8, 2.4, 1.0]
+    "Real Estate (不動産)"     => [21, 52, 125, 53, 73, 18, 2.1, 2.8, 1.0]
+    "Construction (建設)"      => [21, 53, 128, 53, 73, 18, 2.0, 2.7, 1.0]
+    "Transportation (運輸)"    => [20, 50, 120, 54, 74, 19, 2.2, 2.9, 1.1]
+    "Consumer (生活用品)"      => [22, 54, 130, 53, 72, 18, 1.9, 2.6, 1.0]
+    "Consulting (コンサル)"     => [17, 42, 105, 55, 76, 22, 2.4, 3.2, 1.2]
+    "Resources (金/銀/資源)"    => [16, 40, 100, 55, 77, 22, 2.6, 3.4, 1.2]
     "Index N225 (日経平均)"    => [20, 50, 120, 54, 75, 20, 2.1, 2.9, 1.1]
     "Index NASDAQ"             => [14, 34, 90, 57, 80, 24, 2.7, 3.9, 1.2]
+    "ETH/JPY (イーサリアム)"   => [10, 26, 70, 58, 82, 25, 3.0, 4.4, 1.3]
     => [man_fast, man_mid, man_slow, man_rsi_buy, man_rsi_max, man_adx, man_sl, man_tp, man_vol]
 
 sectorReason = switch sectorPreset
-    "Mega Bank (メガバンク)"   => "低ボラ想定: トレンド追随を重視して損切りは浅め"
-    "Semicon (半導体)"         => "高ボラ想定: ADX/出来高の条件を強め、利確幅を広く設定"
-    "Marine (海運)"            => "急騰急落想定: 損切り・利確ともに広め"
-    "Trading (商社)"           => "中高ボラ想定: トレンド継続と押し目のバランス"
-    "Pharma (医薬品)"          => "防御寄り: 過熱追いを抑え、ダマシ回避"
-    "Utility (電力/ガス)"      => "低ボラ寄り: 反応を遅くして安定性優先"
-    "Index N225 (日経平均)"    => "指数向け: 銘柄よりノイズが少ない前提"
-    "Index NASDAQ"             => "高ボラ指数: エントリー厳格、利確幅拡大"
-    => "手動設定を適用"
+    "Mega Bank (メガバンク)"   => "低ボラ想定\nトレンド追随重視\n損切りは浅め"
+    "Regional Bank (地銀)"     => "出来高薄め想定\nシグナルはやや厳格\nノイズ抑制"
+    "Semicon (半導体)"         => "高ボラ想定\nADX/出来高条件を強化\n利確幅を拡大"
+    "High Tech (ハイテク)"      => "成長株向け\nモメンタム優先\n押し目追随"
+    "Marine (海運)"            => "急騰急落を想定\n損切り/利確を広め\n値幅取り重視"
+    "Automotive (自動車)"      => "景気敏感株向け\nトレンド継続重視\n過熱は抑制"
+    "Manufacturing (製造)"     => "中ボラ想定\n安定トレンド追随\nダマシ軽減"
+    "Trading (商社)"           => "中高ボラ想定\nトレンド継続と\n押し目のバランス"
+    "Pharma (医薬品)"          => "防御寄り設定\n過熱追いを抑制\nダマシ回避"
+    "Retail (小売)"            => "中低ボラ想定\n出来高条件は中立\n安定優先"
+    "Utility (電力/ガス)"      => "低ボラ寄り\n反応を遅めに設定\n安定性優先"
+    "Real Estate (不動産)"     => "金利敏感を考慮\n急変回避重視\n中庸設定"
+    "Construction (建設)"      => "循環株向け\n過熱追いを抑えて\n押し目狙い"
+    "Transportation (運輸)"    => "景況感連動型\nトレンド重視\n急落耐性を追加"
+    "Consumer (生活用品)"      => "ディフェンシブ寄り\n安定トレンド重視\nノイズ低減"
+    "Consulting (コンサル)"     => "成長系ボラ対策\n反応は速め\n利確幅は中広"
+    "Resources (金/銀/資源)"    => "コモディティ連動\nボラ変動を想定\n損益幅を拡張"
+    "Index N225 (日経平均)"    => "指数向け\n個別株ノイズが少ない\n中庸設定"
+    "Index NASDAQ"             => "高ボラ指数\nエントリー厳格\n利確幅を拡大"
+    "ETH/JPY (イーサリアム)"   => "超高ボラ想定\n条件を最も厳格化\n損益幅を大きく"
+    => "手動設定\nユーザー指定値を\nそのまま適用"
 
 // --- 2) バックテスト期間（過去3年で固定） ---
 group_bt = "バックテスト設定"
@@ -115,7 +139,7 @@ if barstate.islast
     table.cell(panel, 0, 0, "Preset", text_color=color.white, bgcolor=color.navy)
     table.cell(panel, 1, 0, sectorPreset, text_color=color.white, bgcolor=color.navy)
     table.cell(panel, 0, 1, "理由", text_color=color.white)
-    table.cell(panel, 1, 1, sectorReason, text_color=color.yellow, text_size=size.tiny)
+    table.cell(panel, 1, 1, sectorReason, text_color=color.yellow, text_size=size.small)
     table.cell(panel, 0, 2, "ADX / 閾値", text_color=color.white)
     table.cell(panel, 1, 2, str.tostring(adxVal, "#.0") + " / " + str.tostring(adxTh), text_color=adxVal > adxTh ? color.orange : color.gray)
     table.cell(panel, 0, 3, "RSI", text_color=color.white)
