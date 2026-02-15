@@ -65,6 +65,12 @@ rsiMax         = input.int(75,    "RSI上限 (これ以下で買い)", group=gro
 cooldownPB     = input.int(5,     "PB連打防止(本)", group=group_filter)
 touchWindow    = input.int(120,   "ゾーン接触後の有効期間", group=group_filter)
 
+// 正規化オプション（業種分け不要化のため）
+useRsiPercentile = input.bool(true, "RSIをパーセンタイル判定にする", group=group_filter)
+rsiRankLen       = input.int(252, "RSIランク期間", minval=50, group=group_filter)
+rsiPctMin        = input.float(35.0, "RSI下限ランク(%)", step=1.0, minval=0, maxval=100, group=group_filter)
+rsiPctMax        = input.float(85.0, "RSI上限ランク(%)", step=1.0, minval=0, maxval=100, group=group_filter)
+
 // ==========================================
 // 3. 出来高設定 (Volume Spike)
 // ==========================================
@@ -73,6 +79,9 @@ volLen         = input.int(20,     "出来高SMA期間", group=group_vol)
 volRatioTh     = input.float(1.5,  "急増倍率しきい値", step=0.1, group=group_vol)
 volNearK       = input.float(0.50, "VWAP近傍判定(ATR倍)", step=0.05, group=group_vol)
 cooldownVol    = input.int(3,      "Vol連打防止(本)", minval=0, group=group_vol)
+useVolPercentile = input.bool(true, "出来高をパーセンタイル判定にする", group=group_vol)
+volRankLen       = input.int(252, "出来高ランク期間", minval=50, group=group_vol)
+volPctTh         = input.float(70.0, "出来高ランクしきい値(%)", step=1.0, minval=0, maxval=100, group=group_vol)
 
 // ==========================================
 // ★Dual Buy (日足連携) 設定
@@ -99,6 +108,16 @@ c_header     = color.rgb(56, 44, 125)
 c_grayTxt    = color.rgb(165, 173, 189)
 c_ok         = color.lime
 c_ng         = color.red
+
+// ボラレジーム別の出口調整（入口は共通ロジック）
+group_exit    = "🧯 Exitレジーム調整"
+useVolRegime  = input.bool(true, "ATR%でSL/TPを自動調整", group=group_exit)
+atrPctLow     = input.float(1.2, "低ボラATR%(閾値)", step=0.1, group=group_exit)
+atrPctHigh    = input.float(3.0, "高ボラATR%(閾値)", step=0.1, group=group_exit)
+slLowMult     = input.float(0.9, "低ボラSL倍率", step=0.1, group=group_exit)
+slHighMult    = input.float(1.25, "高ボラSL倍率", step=0.1, group=group_exit)
+tpLowMult     = input.float(0.9, "低ボラTP倍率", step=0.1, group=group_exit)
+tpHighMult    = input.float(1.35, "高ボラTP倍率", step=0.1, group=group_exit)
 
 // ==========================================
 // 計算ロジック: 基本指標
@@ -142,8 +161,11 @@ bool pinbarSignal = (inZone or (math.abs(low - vwap_) < atr * 0.5)) and isPinbar
 // エントリー条件（生）
 bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and isUptrend
 
-// RSIフィルター (上限・下限)
-bool rsiOK = useRSI ? (rsi >= rsiMin and rsi <= rsiMax) : true
+// RSIフィルター: 固定閾値 or パーセンタイル（銘柄内ランク）
+rsiRank = ta.percentrank(rsi, rsiRankLen)
+bool rsiFixedOK = rsi >= rsiMin and rsi <= rsiMax
+bool rsiRankOK  = rsiRank >= rsiPctMin and rsiRank <= rsiPctMax
+bool rsiOK = useRSI ? (useRsiPercentile ? rsiRankOK : rsiFixedOK) : true
 
 // 連打防止
 var int lastEntry = na
@@ -172,19 +194,25 @@ bool buySignal = entrySignalRaw and rsiOK and canEntry and macdConfirm and isAdx
 if buySignal
     lastEntry := bar_index
 
-// TP/SL 計算
-float stopLvl = close - atr * s_slMult
-float target1 = close + atr * s_tp1Mult
+// TP/SL 計算（ボラレジーム可変）
+atrPct = close != 0 ? (atr / close) * 100.0 : 0.0
+slRegime = useVolRegime ? (atrPct >= atrPctHigh ? slHighMult : atrPct <= atrPctLow ? slLowMult : 1.0) : 1.0
+tpRegime = useVolRegime ? (atrPct >= atrPctHigh ? tpHighMult : atrPct <= atrPctLow ? tpLowMult : 1.0) : 1.0
+float stopLvl = close - atr * s_slMult * slRegime
+float target1 = close + atr * s_tp1Mult * tpRegime
 
 // ==========================================
 // 計算ロジック: Volume Spike (Vol)
 // ==========================================
-float volMA    = ta.sma(volume, volLen)
-float volRatio = volume / math.max(volMA, 1)
-bool nearVWAP  = math.abs(close - vwap_) <= atr * volNearK
+float volMA     = ta.sma(volume, volLen)
+float volRatio  = volume / math.max(volMA, 1)
+volRank         = ta.percentrank(volume, volRankLen)
+bool nearVWAP   = math.abs(close - vwap_) <= atr * volNearK
 var int lastVol = na
-bool volBase   = (volRatio >= volRatioTh) and nearVWAP
-bool volSpike = volBase and (na(lastVol) or bar_index - lastVol >= cooldownVol)
+bool volFixedOK = volRatio >= volRatioTh
+bool volRankOK  = volRank >= volPctTh
+bool volBase    = (useVolPercentile ? volRankOK : volFixedOK) and nearVWAP
+bool volSpike   = volBase and (na(lastVol) or bar_index - lastVol >= cooldownVol)
 if volSpike
     lastVol := bar_index
 
@@ -242,7 +270,7 @@ statusCol = isDualBuy or isCombo or buySignal ? c_ok : c_grayTxt
 
 modeTxt = sensitivity
 adxTxt = str.tostring(adxValue, "#.0") + (isAdxStrong ? " 上昇" : " 弱")
-volTxt = str.tostring(volRatio, "#.1") + "x"
+volTxt = useVolPercentile ? (str.tostring(volRank, "#.0") + "%") : (str.tostring(volRatio, "#.1") + "x")
 macdTxt = macdConfirm ? "✔" : "✖"
 breakTxt = crossUp ? "✔" : "✖"
 bandWalk = close > zoneHi and rsi > 55
@@ -269,7 +297,8 @@ if showMonitor
         table.cell(mon, 1, 4, adxTxt, text_color=isAdxStrong ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
 
         table.cell(mon, 0, 5, "RSI", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
-        table.cell(mon, 1, 5, str.tostring(rsi, "#.1"), text_color=rsiOK ? color.white : c_ng, bgcolor=c_panelBg, text_size=size.small)
+        rsiMon = useRsiPercentile ? (str.tostring(rsiRank, "#.0") + "%") : str.tostring(rsi, "#.1")
+        table.cell(mon, 1, 5, rsiMon, text_color=rsiOK ? color.white : c_ng, bgcolor=c_panelBg, text_size=size.small)
 
         table.cell(mon, 0, 6, "Vol倍率", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
         table.cell(mon, 1, 6, volTxt, text_color=volSpike ? c_ok : c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
@@ -284,4 +313,5 @@ if showMonitor
         table.cell(mon, 1, 9, bandTxt, text_color=bandWalk ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
 
         table.cell(mon, 0, 10, "VWAP判定", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
-        table.cell(mon, 1, 10, vwapTxt, text_color=vwapJudge ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+        vwapMon = vwapTxt + " / ATR% " + str.tostring(atrPct, "#.1")
+        table.cell(mon, 1, 10, vwapMon, text_color=vwapJudge ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
