@@ -39,10 +39,11 @@ sectorReason = switch sectorPreset
     "Index NASDAQ"             => "高ボラ指数: エントリー厳格、利確幅拡大"
     => "手動設定を適用"
 
-// --- 2) バックテスト期間 ---
+// --- 2) バックテスト期間（過去3年で固定） ---
 group_bt = "バックテスト設定"
-startTime = input.time(timestamp("2018-01-01T00:00:00"), "開始日", group=group_bt)
-endTime = input.time(timestamp("2030-01-01T00:00:00"), "終了日", group=group_bt)
+yearMs = 31536000000
+startTime = timenow - yearMs * 3
+endTime = timenow
 inDateRange = time >= startTime and time <= endTime
 
 // --- 3) 指標計算 ---
@@ -114,7 +115,7 @@ if barstate.islast
     table.cell(panel, 0, 0, "Preset", text_color=color.white, bgcolor=color.navy)
     table.cell(panel, 1, 0, sectorPreset, text_color=color.white, bgcolor=color.navy)
     table.cell(panel, 0, 1, "理由", text_color=color.white)
-    table.cell(panel, 1, 1, sectorReason, text_color=color.yellow)
+    table.cell(panel, 1, 1, sectorReason, text_color=color.yellow, text_size=size.tiny)
     table.cell(panel, 0, 2, "ADX / 閾値", text_color=color.white)
     table.cell(panel, 1, 2, str.tostring(adxVal, "#.0") + " / " + str.tostring(adxTh), text_color=adxVal > adxTh ? color.orange : color.gray)
     table.cell(panel, 0, 3, "RSI", text_color=color.white)
