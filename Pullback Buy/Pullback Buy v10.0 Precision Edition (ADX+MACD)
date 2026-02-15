@@ -70,6 +70,7 @@ pbEmaLen       = input.int(20, "押し目基準EMA", minval=5, group=group_filte
 pbMinAtr       = input.float(0.6, "最小押し目深さ(ATR)", step=0.1, group=group_filter)
 pbMaxAtr       = input.float(2.2, "最大押し目深さ(ATR)", step=0.1, group=group_filter)
 reclaimBars    = input.int(2, "EMA再奪回猶予(本)", minval=1, maxval=5, group=group_filter)
+depthLookback  = input.int(10, "押し目深さ参照(本)", minval=3, maxval=60, group=group_filter)
 antiChaseAtr   = input.float(0.6, "高値追い禁止(ATR未満)", step=0.1, group=group_filter)
 
 // 正規化オプション（業種分け不要化のため）
@@ -154,11 +155,14 @@ bool touchedRecently = not na(lastTouch) and (bar_index - lastTouch <= touchWind
 
 // 押し目の深さ・戻し確認（ATR正規化）
 pbBase = ta.ema(close, pbEmaLen)
-pbDepthAtr = (pbBase - low) / math.max(atr, syminfo.mintick)
+recentPullbackLow = ta.lowest(low, depthLookback)
+pbDepthAtr = (pbBase - recentPullbackLow) / math.max(atr, syminfo.mintick)
 pbDepthOK = pbDepthAtr >= pbMinAtr and pbDepthAtr <= pbMaxAtr
-reclaimOK = ta.barssince(close > pbBase) <= reclaimBars
+barsSinceReclaim = ta.barssince(ta.crossover(close, pbBase))
+reclaimOK = close > pbBase or (not na(barsSinceReclaim) and barsSinceReclaim <= reclaimBars)
 nearRecentHigh = (ta.highest(high, 20) - close) / math.max(atr, syminfo.mintick) < antiChaseAtr
-pullbackSetup = pbDepthOK and reclaimOK and not nearRecentHigh
+antiChaseBlocked = nearRecentHigh
+pullbackSetup = pbDepthOK and reclaimOK
 
 // ==========================================
 // 計算ロジック: Pullback Buy (PB)
@@ -174,7 +178,7 @@ bool isPinbar   = (lowerWick > bodySize * 2) and (close > open or (close - low) 
 bool pinbarSignal = (inZone or (math.abs(low - vwap_) < atr * 0.5)) and isPinbar
 
 // エントリー条件（生）
-bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and pullbackSetup and isUptrend
+bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and pullbackSetup and (pinbarSignal or not antiChaseBlocked) and isUptrend
 
 // RSIフィルター: 固定閾値 or パーセンタイル（銘柄内ランク）
 rsiRank = ta.percentrank(rsi, rsiRankLen)
