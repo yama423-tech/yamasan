@@ -65,6 +65,13 @@ rsiMax         = input.int(75,    "RSI上限 (これ以下で買い)", group=gro
 cooldownPB     = input.int(5,     "PB連打防止(本)", group=group_filter)
 touchWindow    = input.int(120,   "ゾーン接触後の有効期間", group=group_filter)
 
+// 押し目精度向上
+pbEmaLen       = input.int(20, "押し目基準EMA", minval=5, group=group_filter)
+pbMinAtr       = input.float(0.6, "最小押し目深さ(ATR)", step=0.1, group=group_filter)
+pbMaxAtr       = input.float(2.2, "最大押し目深さ(ATR)", step=0.1, group=group_filter)
+reclaimBars    = input.int(2, "EMA再奪回猶予(本)", minval=1, maxval=5, group=group_filter)
+antiChaseAtr   = input.float(0.6, "高値追い禁止(ATR未満)", step=0.1, group=group_filter)
+
 // 正規化オプション（業種分け不要化のため）
 useRsiPercentile = input.bool(true, "RSIをパーセンタイル判定にする", group=group_filter)
 rsiRankLen       = input.int(252, "RSIランク期間", minval=50, group=group_filter)
@@ -145,6 +152,14 @@ if inZone
     lastTouch := bar_index
 bool touchedRecently = not na(lastTouch) and (bar_index - lastTouch <= touchWindow)
 
+// 押し目の深さ・戻し確認（ATR正規化）
+pbBase = ta.ema(close, pbEmaLen)
+pbDepthAtr = (pbBase - low) / math.max(atr, syminfo.mintick)
+pbDepthOK = pbDepthAtr >= pbMinAtr and pbDepthAtr <= pbMaxAtr
+reclaimOK = ta.barssince(close > pbBase) <= reclaimBars
+nearRecentHigh = (ta.highest(high, 20) - close) / math.max(atr, syminfo.mintick) < antiChaseAtr
+pullbackSetup = pbDepthOK and reclaimOK and not nearRecentHigh
+
 // ==========================================
 // 計算ロジック: Pullback Buy (PB)
 // ==========================================
@@ -159,7 +174,7 @@ bool isPinbar   = (lowerWick > bodySize * 2) and (close > open or (close - low) 
 bool pinbarSignal = (inZone or (math.abs(low - vwap_) < atr * 0.5)) and isPinbar
 
 // エントリー条件（生）
-bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and isUptrend
+bool entrySignalRaw = (crossUp or pinbarSignal) and touchedRecently and pullbackSetup and isUptrend
 
 // RSIフィルター: 固定閾値 or パーセンタイル（銘柄内ランク）
 rsiRank = ta.percentrank(rsi, rsiRankLen)
@@ -236,6 +251,7 @@ bool isDualBuy = buySignal and isDailyBullish
 // ==========================================
 plot(vwap_, "VWAP", color=color.blue, linewidth=2)
 plot(useTrendFilter ? emaTrend : na, "Trend EMA", color=color.gray, linewidth=2)
+plot(pbBase, "PB Base EMA", color=color.new(color.orange, 20), linewidth=1)
 
 // Zone
 p1 = plot(showZones ? zoneHi : na, "Zone Hi", color=na)
@@ -273,8 +289,7 @@ adxTxt = str.tostring(adxValue, "#.0") + (isAdxStrong ? " 上昇" : " 弱")
 volTxt = useVolPercentile ? (str.tostring(volRank, "#.0") + "%") : (str.tostring(volRatio, "#.1") + "x")
 macdTxt = macdConfirm ? "✔" : "✖"
 breakTxt = crossUp ? "✔" : "✖"
-bandWalk = close > zoneHi and rsi > 55
-bandTxt = bandWalk ? "✔" : "✖"
+pbTxt = pullbackSetup ? ("OK " + str.tostring(pbDepthAtr, "#.1") + "ATR") : ("NG " + str.tostring(pbDepthAtr, "#.1") + "ATR")
 vwapJudge = close > vwap_
 vwapTxt = vwapJudge ? "✔" : "✖"
 
@@ -309,8 +324,8 @@ if showMonitor
         table.cell(mon, 0, 8, "Breakout", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
         table.cell(mon, 1, 8, breakTxt, text_color=crossUp ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
 
-        table.cell(mon, 0, 9, "BandWalk", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
-        table.cell(mon, 1, 9, bandTxt, text_color=bandWalk ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 0, 9, "Pullback", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 9, pbTxt, text_color=pullbackSetup ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
 
         table.cell(mon, 0, 10, "VWAP判定", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
         vwapMon = vwapTxt + " / ATR% " + str.tostring(atrPct, "#.1")
