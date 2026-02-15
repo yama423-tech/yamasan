@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("Pullback Buy v10.0 Precision Edition (ADX+MACD)", overlay=true, scale=scale.right, max_labels_count=500, max_lines_count=500)
 
 // ==========================================
@@ -91,6 +91,14 @@ showLines    = input.bool(true,  "TP/SLラインを描画", group=group_vis)
 c_zone       = input.color(color.new(color.green, 90), "ゾーン色", group=group_vis)
 c_sl         = input.color(color.red, "SL色", group=group_vis)
 c_tp         = input.color(color.blue, "TP色", group=group_vis)
+showMonitor  = input.bool(true, "WTPモニターを表示", group=group_vis)
+
+// モニター色
+c_panelBg    = color.rgb(32, 35, 45)
+c_header     = color.rgb(56, 44, 125)
+c_grayTxt    = color.rgb(165, 173, 189)
+c_ok         = color.lime
+c_ng         = color.red
 
 // ==========================================
 // 計算ロジック: 基本指標
@@ -224,3 +232,56 @@ bgcolor(isDualBuy ? color.new(color.lime, 90) : na)
 alertcondition(buySignal, "PB v10 Entry", "Precision PB Entry Detected")
 alertcondition(isDualBuy, "★ Dual Buy Alert", "Daily Trend + Intraday PB Detected!")
 alertcondition(volSpike,  "Volume Spike", "High Volume Detected")
+
+
+// ==========================================
+// WTP Monitor (別添イメージ風ラベル)
+// ==========================================
+statusTxt = isDualBuy ? "Dual Buy" : isCombo ? "Combo" : buySignal ? "買い候補" : "待機"
+statusCol = isDualBuy or isCombo or buySignal ? c_ok : c_grayTxt
+
+modeTxt = sensitivity
+adxTxt = str.tostring(adxValue, "#.0") + (isAdxStrong ? " 上昇" : " 弱")
+volTxt = str.tostring(volRatio, "#.1") + "x"
+macdTxt = macdConfirm ? "✔" : "✖"
+breakTxt = crossUp ? "✔" : "✖"
+bandWalk = close > zoneHi and rsi > 55
+bandTxt = bandWalk ? "✔" : "✖"
+vwapJudge = close > vwap_
+vwapTxt = vwapJudge ? "✔" : "✖"
+
+if showMonitor
+    var table mon = table.new(position.top_right, 2, 11, bgcolor=c_panelBg, frame_color=color.new(color.white, 70), frame_width=1)
+    if barstate.islast
+        table.cell(mon, 0, 0, "WTP Monitor", text_color=color.white, bgcolor=c_header, text_size=size.small)
+        table.cell(mon, 1, 0, "", text_color=color.white, bgcolor=c_header)
+
+        table.cell(mon, 0, 1, "Status", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 1, statusTxt, text_color=statusCol, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 2, "Mode", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 2, modeTxt, text_color=color.white, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 3, "日足Trend", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 3, isDailyBullish ? "✔" : "✖", text_color=isDailyBullish ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 4, "ADX(勢い)", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 4, adxTxt, text_color=isAdxStrong ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 5, "RSI", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 5, str.tostring(rsi, "#.1"), text_color=rsiOK ? color.white : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 6, "Vol倍率", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 6, volTxt, text_color=volSpike ? c_ok : c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 7, "MACD", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 7, macdTxt, text_color=macdConfirm ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 8, "Breakout", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 8, breakTxt, text_color=crossUp ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 9, "BandWalk", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 9, bandTxt, text_color=bandWalk ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
+
+        table.cell(mon, 0, 10, "VWAP判定", text_color=c_grayTxt, bgcolor=c_panelBg, text_size=size.small)
+        table.cell(mon, 1, 10, vwapTxt, text_color=vwapJudge ? c_ok : c_ng, bgcolor=c_panelBg, text_size=size.small)
