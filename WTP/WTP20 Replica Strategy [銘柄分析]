@@ -1,76 +1,127 @@
 //@version=6
-indicator("WTP20 Replica Strategy [銘柄分析]", overlay=true)
+strategy("WTP20 Replica Strategy [銘柄分析] v2", overlay=true, initial_capital=1000000, pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.05, slippage=1, calc_on_order_fills=true)
 
-// --- 設定値 (Inputs) ---
-len_bb = input.int(20, "Bollinger Band Length")
-mult_bb = input.float(2.0, "BB Multiplier")
-len_rsi = input.int(14, "RSI Length")
-len_adx = input.int(14, "ADX Length")
-adx_threshold = input.int(25, "ADX Threshold (勢い)")
+// --- 1) 業種プリセット ---
+group_sector = "業種プリセット"
+sectorPreset = input.string("Mega Bank (メガバンク)", "ターゲット業種", options=["Mega Bank (メガバンク)", "Semicon (半導体)", "Marine (海運)", "Trading (商社)", "Pharma (医薬品)", "Utility (電力/ガス)", "Index N225 (日経平均)", "Index NASDAQ", "Manual (手動設定)"], group=group_sector)
 
-// --- 計算 (Calculations) ---
-// ボリンジャーバンド
-[middle, upper, lower] = ta.bb(close, len_bb, mult_bb)
-plot(upper, color=color.new(color.red, 50), title="BB Upper")
-plot(middle, color=color.new(color.orange, 0), title="BB SMA")
-plot(lower, color=color.new(color.blue, 50), title="BB Lower")
+// 手動設定
+group_manual = "手動設定 (Manual)"
+man_fast = input.int(20, "EMA Fast", minval=5, group=group_manual)
+man_mid = input.int(50, "EMA Mid", minval=10, group=group_manual)
+man_slow = input.int(100, "EMA Slow", minval=20, group=group_manual)
+man_rsi_buy = input.int(55, "RSI下限", minval=40, maxval=80, group=group_manual)
+man_rsi_max = input.int(72, "RSI上限", minval=55, maxval=90, group=group_manual)
+man_adx = input.int(22, "ADX閾値", minval=10, maxval=50, group=group_manual)
+man_sl = input.float(2.2, "ATR Stop 倍率", step=0.1, group=group_manual)
+man_tp = input.float(3.0, "ATR Take 倍率", step=0.1, group=group_manual)
+man_vol = input.float(1.2, "出来高倍率", step=0.1, group=group_manual)
 
-// 移動平均線（リボン風）
-ma1 = ta.sma(close, 20)
-ma2 = ta.sma(close, 50)
-ma3 = ta.sma(close, 100)
-// 短期が長期より上なら上昇トレンド
-is_uptrend = ma1 > ma2 and ma2 > ma3
+[fastLen, midLen, slowLen, rsiBuy, rsiMax, adxTh, slAtrMult, tpAtrMult, volMult] = switch sectorPreset
+    "Mega Bank (メガバンク)"   => [20, 50, 120, 54, 74, 19, 2.0, 2.8, 1.1]
+    "Semicon (半導体)"         => [12, 30, 80, 56, 78, 24, 2.6, 3.8, 1.3]
+    "Marine (海運)"            => [15, 35, 90, 55, 76, 23, 2.8, 3.6, 1.2]
+    "Trading (商社)"           => [18, 45, 110, 54, 75, 21, 2.3, 3.1, 1.2]
+    "Pharma (医薬品)"          => [22, 55, 130, 53, 72, 18, 1.9, 2.6, 1.0]
+    "Utility (電力/ガス)"      => [24, 60, 140, 52, 70, 17, 1.8, 2.4, 1.0]
+    "Index N225 (日経平均)"    => [20, 50, 120, 54, 75, 20, 2.1, 2.9, 1.1]
+    "Index NASDAQ"             => [14, 34, 90, 57, 80, 24, 2.7, 3.9, 1.2]
+    => [man_fast, man_mid, man_slow, man_rsi_buy, man_rsi_max, man_adx, man_sl, man_tp, man_vol]
 
-// RSI & ADX
-rsi_val = ta.rsi(close, len_rsi)
-[diplus, diminus, adx_val] = ta.dmi(len_adx, len_adx)
+sectorReason = switch sectorPreset
+    "Mega Bank (メガバンク)"   => "低ボラ想定: トレンド追随を重視して損切りは浅め"
+    "Semicon (半導体)"         => "高ボラ想定: ADX/出来高の条件を強め、利確幅を広く設定"
+    "Marine (海運)"            => "急騰急落想定: 損切り・利確ともに広め"
+    "Trading (商社)"           => "中高ボラ想定: トレンド継続と押し目のバランス"
+    "Pharma (医薬品)"          => "防御寄り: 過熱追いを抑え、ダマシ回避"
+    "Utility (電力/ガス)"      => "低ボラ寄り: 反応を遅くして安定性優先"
+    "Index N225 (日経平均)"    => "指数向け: 銘柄よりノイズが少ない前提"
+    "Index NASDAQ"             => "高ボラ指数: エントリー厳格、利確幅拡大"
+    => "手動設定を適用"
 
-// --- ロジック判定 (Signal Logic) ---
-// 買い条件: 上昇トレンド中 + RSIが売られすぎではない + ADXで勢いがある + 陽線
-buy_condition = is_uptrend and rsi_val > 50 and rsi_val < 70 and adx_val > adx_threshold and close > open
+// --- 2) バックテスト期間 ---
+group_bt = "バックテスト設定"
+startTime = input.time(timestamp("2018-01-01T00:00:00"), "開始日", group=group_bt)
+endTime = input.time(timestamp("2030-01-01T00:00:00"), "終了日", group=group_bt)
+inDateRange = time >= startTime and time <= endTime
 
-// 状態判定
-var string signal_status = "待機中"
-var color status_color = color.gray
+// --- 3) 指標計算 ---
+emaFast = ta.ema(close, fastLen)
+emaMid = ta.ema(close, midLen)
+emaSlow = ta.ema(close, slowLen)
 
-if buy_condition
-    signal_status := "買いシグナル"
-    status_color := color.green
-else if rsi_val > 75
-    signal_status := "加熱警戒"
-    status_color := color.red
-else
-    signal_status := "待機中"
-    status_color := color.gray
+bbLen = input.int(20, "BB Length", minval=10)
+bbMult = input.float(2.0, "BB Mult", step=0.1)
+[bbMid, bbUpper, bbLower] = ta.bb(close, bbLen, bbMult)
 
-// --- シグナル描画 (Plotting) ---
-plotshape(buy_condition, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, text="BUY")
+rsiLen = input.int(14, "RSI Length", minval=5)
+rsiVal = ta.rsi(close, rsiLen)
 
-// --- ダッシュボード表示 (Dashboard Table) ---
-var table panel = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 30), border_color=color.gray, border_width=1)
+adxLen = input.int(14, "ADX Length", minval=5)
+[_, __, adxVal] = ta.dmi(adxLen, adxLen)
 
+volLen = input.int(50, "Volume MA", minval=5)
+volBase = ta.sma(volume, volLen)
+volOK = volume > volBase * volMult
+
+[macdLine, macdSignal, _h] = ta.macd(close, 12, 26, 9)
+
+atrLen = input.int(14, "ATR Length", minval=5)
+atrVal = ta.atr(atrLen)
+
+// --- 4) シグナル ---
+trendUp = emaFast > emaMid and emaMid > emaSlow
+trendDn = emaFast < emaMid and emaMid < emaSlow
+
+longSignal = inDateRange and trendUp and close > bbMid and rsiVal > rsiBuy and rsiVal < rsiMax and adxVal > adxTh and macdLine > macdSignal and volOK
+shortSignal = inDateRange and trendDn and close < bbMid and rsiVal < (100 - rsiBuy) and rsiVal > (100 - rsiMax) and adxVal > adxTh and macdLine < macdSignal and volOK
+
+if longSignal and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long)
+
+if shortSignal and strategy.position_size >= 0
+    strategy.entry("Short", strategy.short)
+
+// --- 5) 決済 ---
+useTrailing = input.bool(true, "ATRトレーリングを使う", group=group_bt)
+trailMult = input.float(1.2, "Trail ATR 倍率", step=0.1, group=group_bt)
+
+longStop = strategy.position_avg_price - atrVal * slAtrMult
+longTake = strategy.position_avg_price + atrVal * tpAtrMult
+shortStop = strategy.position_avg_price + atrVal * slAtrMult
+shortTake = strategy.position_avg_price - atrVal * tpAtrMult
+
+if strategy.position_size > 0
+    strategy.exit("L-Exit", "Long", stop=longStop, limit=longTake, trail_offset=useTrailing ? atrVal * trailMult : na)
+
+if strategy.position_size < 0
+    strategy.exit("S-Exit", "Short", stop=shortStop, limit=shortTake, trail_offset=useTrailing ? atrVal * trailMult : na)
+
+// --- 6) 可視化 ---
+plot(emaFast, "EMA Fast", color=color.new(color.green, 0))
+plot(emaMid, "EMA Mid", color=color.new(color.orange, 0))
+plot(emaSlow, "EMA Slow", color=color.new(color.blue, 0))
+plot(bbUpper, "BB Upper", color=color.new(color.red, 70))
+plot(bbMid, "BB Mid", color=color.new(color.gray, 60))
+plot(bbLower, "BB Lower", color=color.new(color.aqua, 70))
+
+plotshape(longSignal, title="Long", style=shape.triangleup, color=color.lime, location=location.belowbar, size=size.tiny, text="L")
+plotshape(shortSignal, title="Short", style=shape.triangledown, color=color.red, location=location.abovebar, size=size.tiny, text="S")
+
+// --- 7) 状態パネル ---
+var table panel = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 30), border_color=color.gray)
 if barstate.islast
-    // ヘッダー
-    table.cell(panel, 0, 0, "WTP20 Monitor", text_color=color.white, text_size=size.small, bgcolor=color.navy)
-    table.cell(panel, 1, 0, syminfo.ticker, text_color=color.white, text_size=size.small, bgcolor=color.navy)
-    
-    // トレンド
-    table.cell(panel, 0, 1, "トレンド", text_color=color.white)
-    table.cell(panel, 1, 1, is_uptrend ? "上昇 ↗" : "下降 ↘", text_color=is_uptrend ? color.green : color.red)
-    
-    // ADX
-    table.cell(panel, 0, 2, "ADX(勢い)", text_color=color.white)
-    table.cell(panel, 1, 2, str.tostring(adx_val, "#.##"), text_color=adx_val > adx_threshold ? color.orange : color.gray)
-    
-    // RSI
-    table.cell(panel, 0, 3, "RSI(14)", text_color=color.white)
-    table.cell(panel, 1, 3, str.tostring(rsi_val, "#.##"), text_color=rsi_val > 70 ? color.red : color.white)
-    
-    // 現在値
-    table.cell(panel, 0, 4, "現在値", text_color=color.white)
-    table.cell(panel, 1, 4, str.tostring(close), text_color=color.white)
-    
-    // シグナル状態
-    table.cell(panel, 0, 5, "Active Signal", text_color=color.white)
-    table.cell(panel, 1, 5, signal_status, text_color=status_color, bgcolor=color.new(status_color, 80))
+    table.cell(panel, 0, 0, "Preset", text_color=color.white, bgcolor=color.navy)
+    table.cell(panel, 1, 0, sectorPreset, text_color=color.white, bgcolor=color.navy)
+    table.cell(panel, 0, 1, "理由", text_color=color.white)
+    table.cell(panel, 1, 1, sectorReason, text_color=color.yellow)
+    table.cell(panel, 0, 2, "ADX / 閾値", text_color=color.white)
+    table.cell(panel, 1, 2, str.tostring(adxVal, "#.0") + " / " + str.tostring(adxTh), text_color=adxVal > adxTh ? color.orange : color.gray)
+    table.cell(panel, 0, 3, "RSI", text_color=color.white)
+    table.cell(panel, 1, 3, str.tostring(rsiVal, "#.0"), text_color=rsiVal > rsiMax ? color.red : color.white)
+    table.cell(panel, 0, 4, "Net P/L", text_color=color.white)
+    table.cell(panel, 1, 4, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red)
+    table.cell(panel, 0, 5, "Win / Loss", text_color=color.white)
+    table.cell(panel, 1, 5, str.tostring(strategy.wintrades) + " / " + str.tostring(strategy.losstrades), text_color=color.white)
+    table.cell(panel, 0, 6, "Open Trades", text_color=color.white)
+    table.cell(panel, 1, 6, str.tostring(strategy.opentrades), text_color=color.white)
