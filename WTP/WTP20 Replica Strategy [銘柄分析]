@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("WTP20 Replica Strategy [銘柄分析]", overlay=true)
 
 // --- 設定値 (Inputs) ---
