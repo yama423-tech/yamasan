@@ -165,7 +165,7 @@ emaDn    = ta.falling(emaTrend, trendBars)
 trendBullOK = (not useTrendFilt) or (close > emaTrend) or emaUp
 trendBearOK = (not useTrendFilt) or (close < emaTrend) or emaDn
 
-adxVal = ta.adx(adxLen)
+[diplus, diminus, adxVal] = ta.dmi(adxLen, adxLen)
 emaSlopePct = math.abs(((emaTrend - emaTrend[trendBars]) / emaTrend[trendBars]) * 100.0)
 rangeByAdx = adxVal < adxMin
 rangeBySlope = emaSlopePct < flatSlopePct
