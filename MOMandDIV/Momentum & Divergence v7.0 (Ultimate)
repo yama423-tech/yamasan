@@ -88,6 +88,7 @@ showConfirm   = input.bool(true,  "Confirmed（確定）を表示", group=groupV
 showCombo     = input.bool(true,  "Combo（MOM×Div）を表示", group=groupView)
 showStrong    = input.bool(true,  "Strong（高信頼）を表示", group=groupView)
 showBottom    = input.bool(true,  "Bottom候補を表示", group=groupView)
+showLegend    = input.bool(true,  "凡例を表示", group=groupView)
 showLinesPrice= input.bool(true,  "ダイバージェンスライン（価格）", group=groupView)
 showLabels    = input.bool(true,  "ラベルを表示（マスターSW）", group=groupView)
 
@@ -332,6 +333,37 @@ if showLabels
     if showStrong and bearReliableSig and allow(lastStrongDn)
         drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.normal), lastStrongDn := bar_index
 
+
+
+// ==========================================
+// 凡例 (Legend)
+// ==========================================
+var table legendTbl = table.new(position.top_right, 2, 7, border_width=1)
+
+if barstate.islast
+    if showLegend
+        table.cell(legendTbl, 0, 0, "ラベル", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(legendTbl, 1, 0, "意味",   text_color=color.white, bgcolor=color.new(color.black, 0))
+
+        table.cell(legendTbl, 0, 1, "MOM",   text_color=color.white, bgcolor=colMomUp)
+        table.cell(legendTbl, 1, 1, "モメンタム初動")
+
+        table.cell(legendTbl, 0, 2, "DIV",   text_color=color.white, bgcolor=colDivDn)
+        table.cell(legendTbl, 1, 2, "逆行シグナル")
+
+        table.cell(legendTbl, 0, 3, "CONF",  text_color=color.white, bgcolor=colBull)
+        table.cell(legendTbl, 1, 3, "確定条件一致")
+
+        table.cell(legendTbl, 0, 4, "CMB",   text_color=color.white, bgcolor=colBear)
+        table.cell(legendTbl, 1, 4, "MOM×DIVコンボ")
+
+        table.cell(legendTbl, 0, 5, "STRONG",text_color=color.white, bgcolor=colStrongUp)
+        table.cell(legendTbl, 1, 5, "高信頼シグナル")
+
+        table.cell(legendTbl, 0, 6, "BTM?",  text_color=color.white, bgcolor=colBottom)
+        table.cell(legendTbl, 1, 6, "底候補（要確認）")
+    else
+        table.clear(legendTbl, 0, 0, 1, 6)
 
 // ==========================================
 // アラート条件 (水平相場は除外)
