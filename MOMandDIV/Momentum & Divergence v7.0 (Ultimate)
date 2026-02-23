@@ -110,7 +110,7 @@ strongGapMult = input.float(0.35, "Strong追加距離倍率", minval=0.0, step=0
 labelShiftBars = input.int(0, "ラベル横ずらし(バー)", minval=0, maxval=10, group=groupOffset, tooltip="横ずらし量。0で真上/真下に配置")
 
 // ラベルサイズ変換
-labelSize = sizeSel=="tiny"?size.tiny:sizeSel=="small"?size.small:sizeSel=="normal"?size.normal:sizeSel=="large"?size.large:size.huge
+labelSize = sizeSel=="tiny"?size.tiny:sizeSel=="small"?size.tiny:sizeSel=="normal"?size.small:sizeSel=="large"?size.normal:size.large
 
 // ==========================================
 // 計算ロジック (Calculation Core)
@@ -329,16 +329,16 @@ if showLabels
 
     // Strong（高信頼）
     if showStrong and bullReliableSig and allow(lastStrongUp)
-        drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.normal), lastStrongUp := bar_index
+        drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.small), lastStrongUp := bar_index
     if showStrong and bearReliableSig and allow(lastStrongDn)
-        drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.normal), lastStrongDn := bar_index
+        drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.small), lastStrongDn := bar_index
 
 
 
 // ==========================================
 // 凡例 (Legend)
 // ==========================================
-var table legendTbl = table.new(position.top_right, 2, 7, border_width=1)
+var table legendTbl = table.new(position.bottom_right, 2, 7, border_width=1)
 
 if barstate.islast
     if showLegend
