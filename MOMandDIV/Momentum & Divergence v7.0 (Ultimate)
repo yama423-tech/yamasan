@@ -64,6 +64,7 @@ adxMin        = input.float(18.0, "ADXしきい値", minval=1.0, step=0.5, group
 flatSlopePct  = input.float(0.25, "EMA傾き最小%", minval=0.0, step=0.05, group=groupC)
 bottomLookback= input.int(40, "底判定ルックバック", minval=5, group=groupC)
 bottomRsiMax = input.int(38, "底判定RSI上限", minval=10, maxval=50, group=groupC)
+bottomLinkBars = input.int(12, "底判定: MOM/DIV許容本数", minval=1, group=groupC)
 
 groupCombo   = "コンボ判定 (MOM × Div)"
 useComboBull = input.bool(true,  "Bull: MOM↑ × BullDiv", group=groupCombo)
@@ -224,8 +225,11 @@ bearReliable = bearReliableBase and strongBearTrend
 
 // 底候補シグナル（絶対底ではなく、反転しやすい候補を検出）
 isBottomZone = low <= ta.lowest(low, bottomLookback)
-histRecover  = hist > hist[1]
-bottomSignal = canSignal and isBottomZone and (rsi <= bottomRsiMax) and histRecover and (bullDivSel or momUp)
+histRecover  = (hist > hist[1]) or ta.crossover(hist, 0)
+bsBottomDiv  = ta.barssince(bullDivSel)
+bsBottomMom  = ta.barssince(momUp)
+recentBullTrigger = ((bsBottomDiv >= 0) and (bsBottomDiv <= bottomLinkBars)) or ((bsBottomMom >= 0) and (bsBottomMom <= bottomLinkBars))
+bottomSignal = canSignal and isBottomZone and (rsi <= bottomRsiMax) and histRecover and recentBullTrigger
 
 // 水平相場を除外した実シグナル（表示・アラート共通）
 momUpSig         = momUp and canSignal
@@ -317,8 +321,8 @@ if showLabels
 
 
     // Bottom候補
-    if showBottom and bottomSignalSig and allow(lastBottom) and allow(lastAnyDn)
-        draw("BTM?", colBottom, false, labelSize), lastBottom := bar_index, lastAnyDn := bar_index
+    if showBottom and bottomSignalSig and allow(lastBottom)
+        draw("BTM?", colBottom, false, labelSize), lastBottom := bar_index
 
     // Strong（高信頼）
     if showStrong and bullReliableSig and allow(lastStrongUp) and allow(lastAnyUp)
