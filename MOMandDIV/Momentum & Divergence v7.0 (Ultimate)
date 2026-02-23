@@ -170,6 +170,7 @@ emaSlopePct = math.abs(((emaTrend - emaTrend[trendBars]) / emaTrend[trendBars]) 
 rangeByAdx = adxVal < adxMin
 rangeBySlope = emaSlopePct < flatSlopePct
 isRangeMarket = useRangeBlock and (rangeByAdx or rangeBySlope)
+canSignal = not isRangeMarket
 
 bs = ta.barssince(bullDivSel)
 ss = ta.barssince(bearDivSel)
@@ -211,6 +212,18 @@ strongBullTrend = (close > emaTrend) and emaUp and (rsi >= math.max(rsiUp, 55)) 
 strongBearTrend = (close < emaTrend) and emaDn and (rsi <= math.min(rsiDn, 45)) and (hist < 0)
 bullReliable = bullReliableBase and strongBullTrend
 bearReliable = bearReliableBase and strongBearTrend
+
+// 水平相場を除外した実シグナル（表示・アラート共通）
+momUpSig         = momUp and canSignal
+momDnSig         = momDn and canSignal
+bullDivSelSig    = bullDivSel and canSignal
+bearDivSelSig    = bearDivSel and canSignal
+bullConfirmedSig = bullConfirmed and canSignal
+bearConfirmedSig = bearConfirmed and canSignal
+bullComboSig     = bullCombo and canSignal
+bearComboSig     = bearCombo and canSignal
+bullReliableSig  = bullReliable and canSignal
+bearReliableSig  = bearReliable and canSignal
 
 // ==========================================
 // 描画ヘルパー (Drawing)
@@ -257,33 +270,48 @@ var int lastStrongUp=na, var int lastStrongDn=na
 
 allow(lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
 
-if showLabels and not isRangeMarket
+if showLabels
     // MOM
-    if showMOM and showMOMUp and momUp and allow(lastMOMUp)
+    if showMOM and showMOMUp and momUpSig and allow(lastMOMUp)
         draw("MOM", colMomUp, true, labelSize), lastMOMUp := bar_index
-    if showMOM and showMOMDn and momDn and allow(lastMOMDn)
+    if showMOM and showMOMDn and momDnSig and allow(lastMOMDn)
         draw("MOM", colMomDn, false, labelSize), lastMOMDn := bar_index
 
     // Div
-    if showDiv and not divConfirmedOnly and bullDivSel and allow(lastDivUp)
+    if showDiv and not divConfirmedOnly and bullDivSelSig and allow(lastDivUp)
         draw("DIV", colDivUp, true, labelSize), lastDivUp := bar_index
-    if showDiv and not divConfirmedOnly and bearDivSel and allow(lastDivDn)
+    if showDiv and not divConfirmedOnly and bearDivSelSig and allow(lastDivDn)
         draw("DIV", colDivDn, false, labelSize), lastDivDn := bar_index
 
     // Confirm
-    if showConfirm and bullConfirmed and allow(lastConfUp)
+    if showConfirm and bullConfirmedSig and allow(lastConfUp)
         draw("CONF", colBull, true, labelSize), lastConfUp := bar_index
-    if showConfirm and bearConfirmed and allow(lastConfDn)
+    if showConfirm and bearConfirmedSig and allow(lastConfDn)
         draw("CONF", colBear, false, labelSize), lastConfDn := bar_index
 
     // Combo
-    if showCombo and bullCombo and allow(lastComboUp)
+    if showCombo and bullComboSig and allow(lastComboUp)
         draw("CMB", colBull, true, labelSize), lastComboUp := bar_index
-    if showCombo and bearCombo and allow(lastComboDn)
+    if showCombo and bearComboSig and allow(lastComboDn)
         draw("CMB", colBear, false, labelSize), lastComboDn := bar_index
 
     // Strong（高信頼）
-    if showStrong and bullReliable and allow(lastStrongUp)
+    if showStrong and bullReliableSig and allow(lastStrongUp)
         drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.large), lastStrongUp := bar_index
-    if showStrong and bearReliable and allow(lastStrongDn)
+    if showStrong and bearReliableSig and allow(lastStrongDn)
         drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.large), lastStrongDn := bar_index
+
+
+// ==========================================
+// アラート条件 (水平相場は除外)
+// ==========================================
+alertcondition(momUpSig, "MOM UP", "MOM UP (range filtered)")
+alertcondition(momDnSig, "MOM DOWN", "MOM DOWN (range filtered)")
+alertcondition(bullDivSelSig, "Bull DIV", "Bull DIV (range filtered)")
+alertcondition(bearDivSelSig, "Bear DIV", "Bear DIV (range filtered)")
+alertcondition(bullConfirmedSig, "Bull CONF", "Bull Confirmed (range filtered)")
+alertcondition(bearConfirmedSig, "Bear CONF", "Bear Confirmed (range filtered)")
+alertcondition(bullComboSig, "Bull COMBO", "Bull Combo (range filtered)")
+alertcondition(bearComboSig, "Bear COMBO", "Bear Combo (range filtered)")
+alertcondition(bullReliableSig, "Bull STRONG", "Bull Strong (range filtered)")
+alertcondition(bearReliableSig, "Bear STRONG", "Bear Strong (range filtered)")
