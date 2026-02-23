@@ -64,6 +64,13 @@ useComboBear = input.bool(true,  "Bear: MOM↓ × BearDiv", group=groupCombo)
 comboBars    = input.int(30,     "許容ウィンドウ本数",    minval=1, group=groupCombo)
 orderOpt     = input.string("どちらでも", "発生順序", options=["Div→MOMのみ","MOM→Divのみ","どちらでも"], group=groupCombo)
 
+groupMTF = "週足アライン (強トレンド表示)"
+showWeeklyAlign = input.bool(true, "週足方向が一致したシグナルを強調", group=groupMTF)
+weekTrendBars   = input.int(8, "週足EMA向き確認本数", minval=1, group=groupMTF)
+weekHistMin     = input.float(0.0, "週足MACDヒスト最小強度", step=0.01, group=groupMTF)
+weekRsiMin      = input.int(52, "週足RSIしきい値(上/下)", minval=50, maxval=70, group=groupMTF)
+weekLabelText   = input.string("W-STR", "週足強調ラベル文字", group=groupMTF)
+
 // ==========================================
 // 3. 表示・デザイン (Visuals)
 // ==========================================
@@ -97,6 +104,7 @@ pctPct    = input.float(0.5, "％係数", step=0.1, group=groupOffset)
 
 // ラベルサイズ変換
 labelSize = sizeSel=="tiny"?size.tiny:sizeSel=="small"?size.small:sizeSel=="normal"?size.normal:sizeSel=="large"?size.large:size.huge
+weekLabelSize = labelSize==size.huge ? size.huge : labelSize==size.large ? size.huge : labelSize==size.normal ? size.large : labelSize==size.small ? size.normal : size.small
 
 // ==========================================
 // 計算ロジック (Calculation Core)
@@ -190,6 +198,17 @@ momThenDivDn = (bs_momDn   >= 0) and (bs_momDn   <= comboBars) and bearDivSel
 bullCombo = useComboBull and ((orderOpt != "MOM→Divのみ" and divThenMomUp) or (orderOpt != "Div→MOMのみ" and momThenDivUp))
 bearCombo = useComboBear and ((orderOpt != "MOM→Divのみ" and divThenMomDn) or (orderOpt != "Div→MOMのみ" and momThenDivDn))
 
+// 週足アライン判定（強く長い方向性）
+wClose   = request.security(syminfo.tickerid, "W", close)
+wEma     = request.security(syminfo.tickerid, "W", ta.ema(close, maLen))
+wEmaUp   = request.security(syminfo.tickerid, "W", ta.rising(ta.ema(close, maLen), weekTrendBars))
+wEmaDn   = request.security(syminfo.tickerid, "W", ta.falling(ta.ema(close, maLen), weekTrendBars))
+wRsi     = request.security(syminfo.tickerid, "W", ta.rsi(close, rsiLen))
+wHist    = request.security(syminfo.tickerid, "W", (ta.ema(close, fast) - ta.ema(close, slow)) - ta.ema(ta.ema(close, fast) - ta.ema(close, slow), sig))
+
+weekBullStrong = (wClose > wEma) and wEmaUp and (wRsi >= weekRsiMin) and (wHist >= weekHistMin)
+weekBearStrong = (wClose < wEma) and wEmaDn and (wRsi <= 100 - weekRsiMin) and (wHist <= -weekHistMin)
+
 // ==========================================
 // 描画ヘルパー (Drawing)
 // ==========================================
@@ -210,41 +229,50 @@ colBull  = color.new(color.teal,    alphaLbl)
 colBear  = color.new(color.maroon,  alphaLbl)
 
 // 描画関数
-draw(txt, col, isUp) => 
+draw(txt, col, isUp, lblSize) => 
     label.new(bar_index, isUp ? getYUp() : getYDn(), txt, 
               xloc=xloc.bar_index, yloc=yloc.price, 
               style=isUp ? label.style_label_up : label.style_label_down, 
-              textcolor=textColor, color=col, size=labelSize)
+              textcolor=textColor, color=col, size=lblSize)
 
 // 直近バー保持（重複回避）
 var int lastMOMUp = na, var int lastMOMDn = na
 var int lastDivUp = na, var int lastDivDn = na
 var int lastConfUp= na, var int lastConfDn= na
 var int lastComboUp=na, var int lastComboDn=na
+var int lastWeekUp = na, var int lastWeekDn = na
 
 allow(lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
 
 if showLabels
     // MOM
     if showMOM and showMOMUp and momUp and allow(lastMOMUp)
-        draw("MOM", colMomUp, true), lastMOMUp := bar_index
+        draw("MOM", colMomUp, true, labelSize), lastMOMUp := bar_index
     if showMOM and showMOMDn and momDn and allow(lastMOMDn)
-        draw("MOM", colMomDn, false), lastMOMDn := bar_index
+        draw("MOM", colMomDn, false, labelSize), lastMOMDn := bar_index
 
     // Div
     if showDiv and not divConfirmedOnly and bullDivSel and allow(lastDivUp)
-        draw("DIV", colDivUp, true), lastDivUp := bar_index
+        draw("DIV", colDivUp, true, labelSize), lastDivUp := bar_index
     if showDiv and not divConfirmedOnly and bearDivSel and allow(lastDivDn)
-        draw("DIV", colDivDn, false), lastDivDn := bar_index
+        draw("DIV", colDivDn, false, labelSize), lastDivDn := bar_index
 
     // Confirm
     if showConfirm and bullConfirmed and allow(lastConfUp)
-        draw("CONF", colBull, true), lastConfUp := bar_index
+        draw("CONF", colBull, true, labelSize), lastConfUp := bar_index
     if showConfirm and bearConfirmed and allow(lastConfDn)
-        draw("CONF", colBear, false), lastConfDn := bar_index
+        draw("CONF", colBear, false, labelSize), lastConfDn := bar_index
 
     // Combo
     if showCombo and bullCombo and allow(lastComboUp)
-        draw("CMB", colBull, true), lastComboUp := bar_index
+        draw("CMB", colBull, true, labelSize), lastComboUp := bar_index
     if showCombo and bearCombo and allow(lastComboDn)
-        draw("CMB", colBear, false), lastComboDn := bar_index
+        draw("CMB", colBear, false, labelSize), lastComboDn := bar_index
+
+    bullDayEvent = (showMOM and showMOMUp and momUp) or (showDiv and not divConfirmedOnly and bullDivSel) or (showConfirm and bullConfirmed) or (showCombo and bullCombo)
+    bearDayEvent = (showMOM and showMOMDn and momDn) or (showDiv and not divConfirmedOnly and bearDivSel) or (showConfirm and bearConfirmed) or (showCombo and bearCombo)
+
+    if showWeeklyAlign and bullDayEvent and weekBullStrong and allow(lastWeekUp)
+        draw(weekLabelText, colBull, true, weekLabelSize), lastWeekUp := bar_index
+    if showWeeklyAlign and bearDayEvent and weekBearStrong and allow(lastWeekDn)
+        draw(weekLabelText, colBear, false, weekLabelSize), lastWeekDn := bar_index
