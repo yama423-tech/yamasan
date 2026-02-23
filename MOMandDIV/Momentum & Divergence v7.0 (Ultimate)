@@ -56,6 +56,7 @@ useRSIconf    = input.bool(true,  "RSI>50/<50 必須",           group=groupC)
 useTrendFilt  = input.bool(true,  "EMAトレンド条件",           group=groupC)
 maLen         = input.int(200,    "EMA期間",                   group=groupC)
 trendBars     = input.int(5,      "EMA向き確認本数",           group=groupC)
+trendTfSel    = input.string("チャート足", "トレンド判定足", options=["チャート足","3日足","日足","週足"], group=groupC)
 useVolConf    = input.bool(false, "出来高スパイクも必須",      group=groupC)
 useRangeBlock = input.bool(true,  "横ばい相場ではラベル非表示", group=groupC)
 adxLen        = input.int(14,     "ADX期間", minval=2, group=groupC)
@@ -114,6 +115,8 @@ macdLine   = ta.ema(src, fast) - ta.ema(src, slow)
 signalLine = ta.ema(macdLine, sig)
 hist       = macdLine - signalLine
 
+trendTf = trendTfSel=="チャート足" ? timeframe.period : trendTfSel=="3日足" ? "3D" : trendTfSel=="日足" ? "D" : "W"
+
 volSma   = ta.sma(volume, volLen)
 volSpike = volume > volSma * volMult
 
@@ -161,11 +164,12 @@ bullDivSel = divSourceSel=="MACDのみ" ? bMACD : divSourceSel=="RSIのみ" ? bR
 bearDivSel = divSourceSel=="MACDのみ" ? sMACD : divSourceSel=="RSIのみ" ? sRSI : bearAny
 
 // 確定ロジック
-emaTrend = ta.ema(close, maLen)
-emaUp    = ta.rising(emaTrend, trendBars)
-emaDn    = ta.falling(emaTrend, trendBars)
-trendBullOK = (not useTrendFilt) or (close > emaTrend) or emaUp
-trendBearOK = (not useTrendFilt) or (close < emaTrend) or emaDn
+trendClose = request.security(syminfo.tickerid, trendTf, close)
+emaTrend = request.security(syminfo.tickerid, trendTf, ta.ema(close, maLen))
+emaUp    = request.security(syminfo.tickerid, trendTf, ta.rising(ta.ema(close, maLen), trendBars))
+emaDn    = request.security(syminfo.tickerid, trendTf, ta.falling(ta.ema(close, maLen), trendBars))
+trendBullOK = (not useTrendFilt) or (trendClose > emaTrend) or emaUp
+trendBearOK = (not useTrendFilt) or (trendClose < emaTrend) or emaDn
 
 [diplus, diminus, adxVal] = ta.dmi(adxLen, adxLen)
 emaSlopePct = math.abs(((emaTrend - emaTrend[trendBars]) / emaTrend[trendBars]) * 100.0)
@@ -210,8 +214,8 @@ bullReliableBase = bullCombo and (not useConfirm or bullConfirmed)
 bearReliableBase = bearCombo and (not useConfirm or bearConfirmed)
 
 // レンジ相場の曖昧シグナル除外（Bull/Bearが明確なときのみ）
-strongBullTrend = (close > emaTrend) and emaUp and (rsi >= math.max(rsiUp, 55)) and (hist > 0)
-strongBearTrend = (close < emaTrend) and emaDn and (rsi <= math.min(rsiDn, 45)) and (hist < 0)
+strongBullTrend = (trendClose > emaTrend) and emaUp and (rsi >= math.max(rsiUp, 55)) and (hist > 0)
+strongBearTrend = (trendClose < emaTrend) and emaDn and (rsi <= math.min(rsiDn, 45)) and (hist < 0)
 bullReliable = bullReliableBase and strongBullTrend
 bearReliable = bearReliableBase and strongBearTrend
 
