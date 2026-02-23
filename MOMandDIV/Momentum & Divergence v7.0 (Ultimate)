@@ -78,6 +78,7 @@ divConfirmedOnly = input.bool(false, "Divは『確定のみ』表示（未確定
 
 showConfirm   = input.bool(true,  "Confirmed（確定）を表示", group=groupView)
 showCombo     = input.bool(true,  "Combo（MOM×Div）を表示", group=groupView)
+showStrong    = input.bool(true,  "Strong（高信頼）を表示", group=groupView)
 showLinesPrice= input.bool(true,  "ダイバージェンスライン（価格）", group=groupView)
 showLabels    = input.bool(true,  "ラベルを表示（マスターSW）", group=groupView)
 
@@ -190,6 +191,10 @@ momThenDivDn = (bs_momDn   >= 0) and (bs_momDn   <= comboBars) and bearDivSel
 bullCombo = useComboBull and ((orderOpt != "MOM→Divのみ" and divThenMomUp) or (orderOpt != "Div→MOMのみ" and momThenDivUp))
 bearCombo = useComboBear and ((orderOpt != "MOM→Divのみ" and divThenMomDn) or (orderOpt != "Div→MOMのみ" and momThenDivDn))
 
+// 高信頼シグナル（MOM×DIVが揃い、Confirm有効時はConfirmも満たす）
+bullReliable = bullCombo and (not useConfirm or bullConfirmed)
+bearReliable = bearCombo and (not useConfirm or bearConfirmed)
+
 // ==========================================
 // 描画ヘルパー (Drawing)
 // ==========================================
@@ -208,43 +213,52 @@ colDivUp = color.new(color.aqua,    alphaLbl)
 colDivDn = color.new(color.red,     alphaLbl)
 colBull  = color.new(color.teal,    alphaLbl)
 colBear  = color.new(color.maroon,  alphaLbl)
+colStrongUp = color.new(color.lime, alphaLbl)
+colStrongDn = color.new(color.purple, alphaLbl)
 
 // 描画関数
-draw(txt, col, isUp) => 
+draw(txt, col, isUp, lblSize) => 
     label.new(bar_index, isUp ? getYUp() : getYDn(), txt, 
               xloc=xloc.bar_index, yloc=yloc.price, 
               style=isUp ? label.style_label_up : label.style_label_down, 
-              textcolor=textColor, color=col, size=labelSize)
+              textcolor=textColor, color=col, size=lblSize)
 
 // 直近バー保持（重複回避）
 var int lastMOMUp = na, var int lastMOMDn = na
 var int lastDivUp = na, var int lastDivDn = na
 var int lastConfUp= na, var int lastConfDn= na
 var int lastComboUp=na, var int lastComboDn=na
+var int lastStrongUp=na, var int lastStrongDn=na
 
 allow(lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
 
 if showLabels
     // MOM
     if showMOM and showMOMUp and momUp and allow(lastMOMUp)
-        draw("MOM", colMomUp, true), lastMOMUp := bar_index
+        draw("MOM", colMomUp, true, labelSize), lastMOMUp := bar_index
     if showMOM and showMOMDn and momDn and allow(lastMOMDn)
-        draw("MOM", colMomDn, false), lastMOMDn := bar_index
+        draw("MOM", colMomDn, false, labelSize), lastMOMDn := bar_index
 
     // Div
     if showDiv and not divConfirmedOnly and bullDivSel and allow(lastDivUp)
-        draw("DIV", colDivUp, true), lastDivUp := bar_index
+        draw("DIV", colDivUp, true, labelSize), lastDivUp := bar_index
     if showDiv and not divConfirmedOnly and bearDivSel and allow(lastDivDn)
-        draw("DIV", colDivDn, false), lastDivDn := bar_index
+        draw("DIV", colDivDn, false, labelSize), lastDivDn := bar_index
 
     // Confirm
     if showConfirm and bullConfirmed and allow(lastConfUp)
-        draw("CONF", colBull, true), lastConfUp := bar_index
+        draw("CONF", colBull, true, labelSize), lastConfUp := bar_index
     if showConfirm and bearConfirmed and allow(lastConfDn)
-        draw("CONF", colBear, false), lastConfDn := bar_index
+        draw("CONF", colBear, false, labelSize), lastConfDn := bar_index
 
     // Combo
     if showCombo and bullCombo and allow(lastComboUp)
-        draw("CMB", colBull, true), lastComboUp := bar_index
+        draw("CMB", colBull, true, labelSize), lastComboUp := bar_index
     if showCombo and bearCombo and allow(lastComboDn)
-        draw("CMB", colBear, false), lastComboDn := bar_index
+        draw("CMB", colBear, false, labelSize), lastComboDn := bar_index
+
+    // Strong（高信頼）
+    if showStrong and bullReliable and allow(lastStrongUp)
+        draw("STRONG", colStrongUp, true, size.huge), lastStrongUp := bar_index
+    if showStrong and bearReliable and allow(lastStrongDn)
+        draw("STRONG", colStrongDn, false, size.huge), lastStrongDn := bar_index
