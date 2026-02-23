@@ -64,11 +64,14 @@ useComboBear = input.bool(true,  "Bear: MOM↓ × BearDiv", group=groupCombo)
 comboBars    = input.int(30,     "許容ウィンドウ本数",    minval=1, group=groupCombo)
 orderOpt     = input.string("どちらでも", "発生順序", options=["Div→MOMのみ","MOM→Divのみ","どちらでも"], group=groupCombo)
 
-groupMTF = "週足アライン (強トレンド表示)"
+groupMTF = "週足アライン (強トレンド + 深い底/天)"
 showWeeklyAlign = input.bool(true, "週足方向が一致したシグナルを強調", group=groupMTF)
 weekTrendBars   = input.int(8, "週足EMA向き確認本数", minval=1, group=groupMTF)
+weekTrendSlopeMinPct = input.float(1.0, "週足EMA上昇/下降率 最低%", minval=0.0, step=0.1, group=groupMTF)
 weekHistMin     = input.float(0.0, "週足MACDヒスト最小強度", step=0.01, group=groupMTF)
 weekRsiMin      = input.int(52, "週足RSIしきい値(上/下)", minval=50, maxval=70, group=groupMTF)
+weekExtremeLookback = input.int(52, "週足の深い底/天 判定期間", minval=8, group=groupMTF)
+weekExtremeNearPct  = input.float(6.0, "週足底/天への近さ(%)", minval=0.5, step=0.5, group=groupMTF)
 weekLabelText   = input.string("W-STR", "週足強調ラベル文字", group=groupMTF)
 
 // ==========================================
@@ -198,7 +201,7 @@ momThenDivDn = (bs_momDn   >= 0) and (bs_momDn   <= comboBars) and bearDivSel
 bullCombo = useComboBull and ((orderOpt != "MOM→Divのみ" and divThenMomUp) or (orderOpt != "Div→MOMのみ" and momThenDivUp))
 bearCombo = useComboBear and ((orderOpt != "MOM→Divのみ" and divThenMomDn) or (orderOpt != "Div→MOMのみ" and momThenDivDn))
 
-// 週足アライン判定（強く長い方向性）
+// 週足アライン判定（強く長い方向性 + 深い底/天）
 wClose   = request.security(syminfo.tickerid, "W", close)
 wEma     = request.security(syminfo.tickerid, "W", ta.ema(close, maLen))
 wEmaUp   = request.security(syminfo.tickerid, "W", ta.rising(ta.ema(close, maLen), weekTrendBars))
@@ -206,8 +209,19 @@ wEmaDn   = request.security(syminfo.tickerid, "W", ta.falling(ta.ema(close, maLe
 wRsi     = request.security(syminfo.tickerid, "W", ta.rsi(close, rsiLen))
 wHist    = request.security(syminfo.tickerid, "W", (ta.ema(close, fast) - ta.ema(close, slow)) - ta.ema(ta.ema(close, fast) - ta.ema(close, slow), sig))
 
-weekBullStrong = (wClose > wEma) and wEmaUp and (wRsi >= weekRsiMin) and (wHist >= weekHistMin)
-weekBearStrong = (wClose < wEma) and wEmaDn and (wRsi <= 100 - weekRsiMin) and (wHist <= -weekHistMin)
+wLowRange    = request.security(syminfo.tickerid, "W", ta.lowest(low, weekExtremeLookback))
+wHighRange   = request.security(syminfo.tickerid, "W", ta.highest(high, weekExtremeLookback))
+wBottomDist  = ((wClose - wLowRange) / wLowRange) * 100.0
+wTopDist     = ((wHighRange - wClose) / wHighRange) * 100.0
+wEmaSlopePct = math.abs(((wEma - wEma[weekTrendBars]) / wEma[weekTrendBars]) * 100.0)
+
+weekBullTrendStrong = (wClose > wEma) and wEmaUp and (wEmaSlopePct >= weekTrendSlopeMinPct) and (wRsi >= weekRsiMin) and (wHist >= weekHistMin)
+weekBearTrendStrong = (wClose < wEma) and wEmaDn and (wEmaSlopePct >= weekTrendSlopeMinPct) and (wRsi <= 100 - weekRsiMin) and (wHist <= -weekHistMin)
+weekDeepBottom = wBottomDist <= weekExtremeNearPct
+weekDeepTop    = wTopDist <= weekExtremeNearPct
+
+weekBullStrong = weekBullTrendStrong and weekDeepBottom
+weekBearStrong = weekBearTrendStrong and weekDeepTop
 
 // ==========================================
 // 描画ヘルパー (Drawing)
