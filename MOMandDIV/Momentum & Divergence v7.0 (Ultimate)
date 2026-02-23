@@ -62,6 +62,8 @@ useRangeBlock = input.bool(true,  "横ばい相場ではラベル非表示", gro
 adxLen        = input.int(14,     "ADX期間", minval=2, group=groupC)
 adxMin        = input.float(18.0, "ADXしきい値", minval=1.0, step=0.5, group=groupC)
 flatSlopePct  = input.float(0.25, "EMA傾き最小%", minval=0.0, step=0.05, group=groupC)
+bottomLookback= input.int(40, "底判定ルックバック", minval=5, group=groupC)
+bottomRsiMax = input.int(38, "底判定RSI上限", minval=10, maxval=50, group=groupC)
 
 groupCombo   = "コンボ判定 (MOM × Div)"
 useComboBull = input.bool(true,  "Bull: MOM↑ × BullDiv", group=groupCombo)
@@ -84,6 +86,7 @@ divConfirmedOnly = input.bool(false, "Divは『確定のみ』表示（未確定
 showConfirm   = input.bool(true,  "Confirmed（確定）を表示", group=groupView)
 showCombo     = input.bool(true,  "Combo（MOM×Div）を表示", group=groupView)
 showStrong    = input.bool(true,  "Strong（高信頼）を表示", group=groupView)
+showBottom    = input.bool(true,  "Bottom候補を表示", group=groupView)
 showLinesPrice= input.bool(true,  "ダイバージェンスライン（価格）", group=groupView)
 showLabels    = input.bool(true,  "ラベルを表示（マスターSW）", group=groupView)
 
@@ -219,6 +222,11 @@ strongBearTrend = (trendClose < emaTrend) and emaDn and (rsi <= math.min(rsiDn, 
 bullReliable = bullReliableBase and strongBullTrend
 bearReliable = bearReliableBase and strongBearTrend
 
+// 底候補シグナル（絶対底ではなく、反転しやすい候補を検出）
+isBottomZone = low <= ta.lowest(low, bottomLookback)
+histRecover  = hist > hist[1]
+bottomSignal = canSignal and isBottomZone and (rsi <= bottomRsiMax) and histRecover and (bullDivSel or momUp)
+
 // 水平相場を除外した実シグナル（表示・アラート共通）
 momUpSig         = momUp and canSignal
 momDnSig         = momDn and canSignal
@@ -230,6 +238,7 @@ bullComboSig     = bullCombo and canSignal
 bearComboSig     = bearCombo and canSignal
 bullReliableSig  = bullReliable and canSignal
 bearReliableSig  = bearReliable and canSignal
+bottomSignalSig  = bottomSignal
 
 // ==========================================
 // 描画ヘルパー (Drawing)
@@ -255,6 +264,7 @@ colBull  = color.new(color.teal,    alphaLbl)
 colBear  = color.new(color.maroon,  alphaLbl)
 colStrongUp = color.new(color.lime, alphaLbl)
 colStrongDn = color.new(color.purple, alphaLbl)
+colBottom   = color.new(color.blue, alphaLbl)
 
 // 描画関数
 draw(txt, col, isUp, lblSize) => 
@@ -275,6 +285,7 @@ var int lastDivUp = na, var int lastDivDn = na
 var int lastConfUp= na, var int lastConfDn= na
 var int lastComboUp=na, var int lastComboDn=na
 var int lastStrongUp=na, var int lastStrongDn=na
+var int lastBottom=na
 var int lastAnyUp=na, var int lastAnyDn=na
 
 allow(lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
@@ -304,6 +315,11 @@ if showLabels
     if showCombo and bearComboSig and allow(lastComboDn) and allow(lastAnyDn)
         draw("CMB", colBear, false, labelSize), lastComboDn := bar_index, lastAnyDn := bar_index
 
+
+    // Bottom候補
+    if showBottom and bottomSignalSig and allow(lastBottom) and allow(lastAnyDn)
+        draw("BTM?", colBottom, false, labelSize), lastBottom := bar_index, lastAnyDn := bar_index
+
     // Strong（高信頼）
     if showStrong and bullReliableSig and allow(lastStrongUp) and allow(lastAnyUp)
         drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.normal), lastStrongUp := bar_index, lastAnyUp := bar_index
@@ -324,3 +340,4 @@ alertcondition(bullComboSig, "Bull COMBO", "Bull Combo (range filtered)")
 alertcondition(bearComboSig, "Bear COMBO", "Bear Combo (range filtered)")
 alertcondition(bullReliableSig, "Bull STRONG", "Bull Strong (range filtered)")
 alertcondition(bearReliableSig, "Bear STRONG", "Bear Strong (range filtered)")
+alertcondition(bottomSignalSig, "Bottom Candidate", "Bottom candidate detected (range filtered)")
