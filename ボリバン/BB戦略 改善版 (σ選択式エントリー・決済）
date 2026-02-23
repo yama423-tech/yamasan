@@ -1,0 +1,261 @@
+//@version=5
+strategy("BB戦略 改善版 (σ選択式エントリー/決済)", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// ============================================
+// トレード期間設定
+// ============================================
+tradeYears = input.int(3, "直近トレード期間 (年)", minval=1, maxval=10, group="トレード期間")
+startTime = timestamp(year(timenow) - tradeYears, month(timenow), dayofmonth(timenow), 0, 0)
+inDateRange = time >= startTime
+
+// ============================================
+// パラメータ設定
+// ============================================
+// --- ボリンジャーバンド ---
+length = input.int(20, "BB期間", minval=1, group="ボリンジャーバンド")
+source = input.source(close, "価格ソース", group="ボリンジャーバンド")
+
+// --- σ選択 (エントリー/決済) ---
+entrySigma = input.float(2.0, "エントリーσ (買い: -σ側)", minval=0.5, maxval=3.0, step=0.5, group="σ設定", tooltip="-2.0 → -2σで買い / -1.0 → -1σで買い")
+exitSigma = input.float(2.0, "決済σ (+σ側)", minval=0.5, maxval=3.0, step=0.5, group="σ設定", tooltip="+2.0 → +2σで決済 / +1.0 → +1σで決済")
+
+// --- エントリーモード ---
+entryMode = input.string("ゾーン", "エントリー判定方式", options=["ゾーン", "クロス"], group="エントリー設定", tooltip="ゾーン: バンド以下にいる間エントリー可 / クロス: クロスした瞬間のみ")
+entryWindow = input.int(5, "エントリー猶予バー数 (クロスモード時)", minval=1, maxval=20, group="エントリー設定", tooltip="クロスモード時、クロス後この本数以内ならフィルター通過でエントリー可")
+
+// --- トレンドフィルター ---
+useTrendFilter = input.bool(false, "トレンドフィルターを使用", group="トレンドフィルター")
+trendLength = input.int(200, "トレンド判定SMA期間", minval=10, group="トレンドフィルター")
+
+// --- RSIフィルター ---
+useRsiFilter = input.bool(true, "RSIフィルターを使用", group="RSIフィルター")
+rsiLength = input.int(14, "RSI期間", minval=2, group="RSIフィルター")
+rsiOversold = input.float(45.0, "RSI 過売り閾値", minval=1, maxval=80, group="RSIフィルター", tooltip="この値以下でエントリー可。30=厳格、45=標準、50=緩め")
+
+// --- 出来高フィルター ---
+useVolFilter = input.bool(false, "出来高フィルターを使用", group="出来高フィルター")
+volLength = input.int(20, "出来高MA期間", minval=1, group="出来高フィルター")
+volMult = input.float(1.0, "出来高倍率 (MA×この値以上)", minval=0.5, step=0.1, group="出来高フィルター")
+
+// --- バンド幅フィルター (スクイーズ回避) ---
+useBBWFilter = input.bool(false, "バンド幅フィルターを使用", group="バンド幅フィルター")
+bbwPercentile = input.int(20, "バンド幅パーセンタイル閾値 (%)", minval=1, maxval=100, group="バンド幅フィルター")
+bbwLookback = input.int(100, "バンド幅ルックバック期間", minval=20, group="バンド幅フィルター")
+
+// --- 決済設定 ---
+exitMode = input.string("σバンド", "決済モード", options=["中心線", "σバンド", "段階的"], group="決済設定", tooltip="σバンド: 指定した+σで決済 / 中心線: SMAで決済 / 段階的: 中心線で半分→+σで残り")
+useStopLoss = input.bool(true, "ストップロスを使用", group="決済設定")
+stopLossPct = input.float(3.0, "ストップロス (%)", minval=0.1, step=0.1, group="決済設定")
+useTrailingStop = input.bool(false, "トレーリングストップを使用", group="決済設定")
+trailingPct = input.float(2.0, "トレーリング幅 (%)", minval=0.1, step=0.1, group="決済設定")
+
+// --- 連続損失制限 ---
+useConsecLimit = input.bool(false, "連続損失後の休止を使用", group="リスク管理")
+maxConsecLoss = input.int(3, "連続損失上限", minval=1, group="リスク管理")
+cooldownBars = input.int(20, "休止バー数", minval=1, group="リスク管理")
+
+// ============================================
+// インジケーター計算
+// ============================================
+basis = ta.sma(source, length)
+stdev = ta.stdev(source, length)
+
+entryBand = basis - entrySigma * stdev
+exitBand = basis + exitSigma * stdev
+
+upper2 = basis + 2.0 * stdev
+lower2 = basis - 2.0 * stdev
+upper1 = basis + 1.0 * stdev
+lower1 = basis - 1.0 * stdev
+
+bbw = (upper2 - lower2) / basis
+trendSma = ta.sma(close, trendLength)
+rsi = ta.rsi(close, rsiLength)
+volMa = ta.sma(volume, volLength)
+bbwRank = ta.percentrank(bbw, bbwLookback)
+
+sigmaInfo = "-" + str.tostring(entrySigma, "#.#") + "σ → +" + str.tostring(exitSigma, "#.#") + "σ"
+entryLabelText = "-" + str.tostring(entrySigma, "#.#") + "σ 買い"
+exitLabelText = "+" + str.tostring(exitSigma, "#.#") + "σ 決済"
+
+// ============================================
+// フィルター条件
+// ============================================
+trendOk = useTrendFilter ? close > trendSma : true
+rsiOk = useRsiFilter ? rsi <= rsiOversold : true
+volOk = useVolFilter ? volume > volMa * volMult : true
+bbwOk = useBBWFilter ? bbwRank > bbwPercentile : true
+
+// ============================================
+// 連続損失追跡
+// ============================================
+var int consecLosses = 0
+var int lastLossBar = 0
+
+if strategy.closedtrades > 0
+    lastTradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if ta.change(strategy.closedtrades) != 0
+        if lastTradeProfit < 0
+            consecLosses := consecLosses + 1
+            lastLossBar := bar_index
+        else
+            consecLosses := 0
+
+cooldownOk = useConsecLimit ? (consecLosses < maxConsecLoss or bar_index - lastLossBar > cooldownBars) : true
+
+// ============================================
+// エントリー条件
+// ============================================
+crossedUnder = ta.crossunder(source, entryBand)
+var int barsSinceCross = 999
+if crossedUnder
+    barsSinceCross := 0
+else
+    barsSinceCross := barsSinceCross + 1
+
+inEntryZone = source <= entryBand
+
+var bool canEnterAgain = true
+if strategy.position_size == 0 and source > entryBand
+    canEnterAgain := true
+if strategy.position_size > 0
+    canEnterAgain := false
+
+priceCondition = false
+if entryMode == "ゾーン"
+    priceCondition := inEntryZone and canEnterAgain
+else
+    priceCondition := barsSinceCross <= entryWindow and canEnterAgain
+
+filtersOk = trendOk and rsiOk and volOk and bbwOk and cooldownOk
+buyCondition = priceCondition and filtersOk and strategy.position_size == 0 and inDateRange
+
+// ============================================
+// 決済条件
+// ============================================
+exitAtMiddle = exitMode == "中心線" and ta.crossover(source, basis)
+exitAtSigma = exitMode == "σバンド" and (ta.crossover(source, exitBand) or source >= exitBand)
+
+exitHalfAtMiddle = exitMode == "段階的" and ta.crossover(source, basis) and strategy.position_size > 0
+exitRestAtSigma = exitMode == "段階的" and ta.crossover(source, exitBand) and strategy.position_size > 0
+
+sellCondition = exitAtMiddle or exitAtSigma
+
+// ============================================
+// 期間外ポジション強制決済
+// ============================================
+if not inDateRange and strategy.position_size > 0
+    strategy.close_all("期間外決済")
+
+// ============================================
+// 戦略実行
+// ============================================
+if buyCondition
+    strategy.entry("Long", strategy.long)
+    canEnterAgain := false
+    label.new(bar_index, low, entryLabelText, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+if exitMode == "段階的"
+    if exitHalfAtMiddle
+        strategy.close("Long", qty_percent=50, comment="半分決済@中心線")
+        label.new(bar_index, high, "半決済", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
+    if exitRestAtSigma
+        strategy.close("Long", comment="全決済")
+        label.new(bar_index, high, exitLabelText, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+else
+    if sellCondition and strategy.position_size > 0
+        strategy.close("Long")
+        exitText = exitMode == "中心線" ? "中心線 決済" : exitLabelText
+        label.new(bar_index, high, exitText, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+if useStopLoss and strategy.position_size > 0
+    strategy.exit("SL", "Long", stop=strategy.position_avg_price * (1 - stopLossPct / 100))
+
+if useTrailingStop and strategy.position_size > 0
+    strategy.exit("Trail", "Long", trail_price=close, trail_offset=close * trailingPct / 100 / syminfo.mintick)
+
+// ============================================
+// チャート表示
+// ============================================
+plot(upper2, "+2σ", color=color.new(color.red, 70), linewidth=1, style=plot.style_circles)
+plot(lower2, "-2σ", color=color.new(color.blue, 70), linewidth=1, style=plot.style_circles)
+plot(upper1, "+1σ", color=color.new(color.red, 80), linewidth=1, style=plot.style_circles)
+plot(lower1, "-1σ", color=color.new(color.blue, 80), linewidth=1, style=plot.style_circles)
+
+pEntry = plot(entryBand, "エントリーバンド", color=color.lime, linewidth=2)
+pExit = plot(exitBand, "決済バンド", color=color.fuchsia, linewidth=2)
+pBasis = plot(basis, "中心線 (SMA)", color=color.orange, linewidth=1)
+
+plot(useTrendFilter ? trendSma : na, "トレンドSMA", color=color.white, linewidth=1, style=plot.style_stepline)
+
+fill(pExit, pBasis, color=color.new(color.fuchsia, 92), title="決済側塗りつぶし")
+fill(pBasis, pEntry, color=color.new(color.lime, 92), title="エントリー側塗りつぶし")
+
+bgcolor(strategy.position_size > 0 ? color.new(color.green, 95) : na, title="ポジション背景")
+bgcolor(inEntryZone and not filtersOk and inDateRange ? color.new(color.yellow, 90) : na, title="フィルター拒否")
+bgcolor(not inDateRange ? color.new(color.gray, 95) : na, title="期間外")
+
+// ============================================
+// パフォーマンス情報表示
+// ============================================
+var table infoTable = table.new(position.top_right, 2, 14, border_width=1)
+
+if barstate.islast
+    row = 0
+    table.cell(infoTable, 0, row, "項目", bgcolor=color.gray, text_color=color.white)
+    table.cell(infoTable, 1, row, "値", bgcolor=color.gray, text_color=color.white)
+    row += 1
+    table.cell(infoTable, 0, row, "トレード期間", text_color=color.white)
+    table.cell(infoTable, 1, row, "直近" + str.tostring(tradeYears) + "年", text_color=color.aqua)
+    row += 1
+    table.cell(infoTable, 0, row, "σ設定", text_color=color.white)
+    table.cell(infoTable, 1, row, sigmaInfo, text_color=color.yellow)
+    row += 1
+    table.cell(infoTable, 0, row, "判定方式", text_color=color.white)
+    table.cell(infoTable, 1, row, entryMode, text_color=color.yellow)
+    row += 1
+    table.cell(infoTable, 0, row, "総トレード数", text_color=color.white)
+    table.cell(infoTable, 1, row, str.tostring(strategy.closedtrades), text_color=color.white)
+    row += 1
+    table.cell(infoTable, 0, row, "勝率", text_color=color.white)
+    winRate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+    table.cell(infoTable, 1, row, str.tostring(winRate, "#.##") + "%", text_color=winRate >= 50 ? color.lime : color.red)
+    row += 1
+    table.cell(infoTable, 0, row, "PF", text_color=color.white)
+    pf = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0
+    table.cell(infoTable, 1, row, str.tostring(pf, "#.##"), text_color=pf >= 1.5 ? color.lime : pf >= 1.0 ? color.yellow : color.red)
+    row += 1
+    table.cell(infoTable, 0, row, "純損益", text_color=color.white)
+    table.cell(infoTable, 1, row, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red)
+    row += 1
+    table.cell(infoTable, 0, row, "総利益率", text_color=color.white)
+    totalReturn = (strategy.netprofit / strategy.initial_capital) * 100
+    table.cell(infoTable, 1, row, str.tostring(totalReturn, "#.##") + "%", text_color=totalReturn >= 0 ? color.lime : color.red)
+    row += 1
+    table.cell(infoTable, 0, row, "最大DD", text_color=color.white)
+    table.cell(infoTable, 1, row, str.tostring(strategy.max_drawdown, "#.##"), text_color=color.red)
+    row += 1
+    table.cell(infoTable, 0, row, "RSI", text_color=color.white)
+    table.cell(infoTable, 1, row, str.tostring(rsi, "#.##"), text_color=rsi < 30 ? color.lime : rsi > 70 ? color.red : color.white)
+    row += 1
+    filterStatus = ""
+    filterStatus += trendOk ? "T" : "t"
+    filterStatus += rsiOk ? " R" : " r"
+    filterStatus += volOk ? " V" : " v"
+    filterStatus += bbwOk ? " B" : " b"
+    table.cell(infoTable, 0, row, "フィルター", text_color=color.white)
+    table.cell(infoTable, 1, row, filterStatus, text_color=filtersOk ? color.lime : color.orange)
+    row += 1
+    table.cell(infoTable, 0, row, "連続損失", text_color=color.white)
+    table.cell(infoTable, 1, row, str.tostring(consecLosses), text_color=consecLosses >= maxConsecLoss ? color.red : color.white)
+    row += 1
+    table.cell(infoTable, 0, row, "現在ポジション", text_color=color.white)
+    posStatus = strategy.position_size > 0 ? "ロング" : "なし"
+    table.cell(infoTable, 1, row, posStatus, text_color=strategy.position_size > 0 ? color.lime : color.white)
+
+// ============================================
+// アラート設定
+// ============================================
+alertcondition(buyCondition, title="買いシグナル", message="BB戦略: 全条件通過 - 買いシグナル発生")
+alertcondition(sellCondition, title="決済シグナル", message="BB戦略: 決済シグナル発生")
+alertcondition(inEntryZone and not filtersOk, title="フィルター拒否", message="BB戦略: エントリーバンドタッチもフィルター不通過")
