@@ -196,8 +196,10 @@ rsiBullOK = (not useRSIconf)  or (rsi > 50)
 rsiBearOK = (not useRSIconf)  or (rsi < 50)
 volConfOK = (not useVolConf)  or volSpike
 
-bullConfirmed = useConfirm and (bs >= 0) and breakUpOK and momBullOK and rsiBullOK and trendBullOK and volConfOK
-bearConfirmed = useConfirm and (ss >= 0) and breakDnOK and momBearOK and rsiBearOK and trendBearOK and volConfOK
+bullConfirmedRaw = (bs >= 0) and breakUpOK and momBullOK and rsiBullOK and trendBullOK and volConfOK
+bearConfirmedRaw = (ss >= 0) and breakDnOK and momBearOK and rsiBearOK and trendBearOK and volConfOK
+bullConfirmed = bullConfirmedRaw
+bearConfirmed = bearConfirmedRaw
 
 // コンボ
 bs_bullDiv = ta.barssince(bullDivSel)
@@ -229,7 +231,7 @@ histRecover  = (hist > hist[1]) or ta.crossover(hist, 0)
 bsBottomDiv  = ta.barssince(bullDivSel)
 bsBottomMom  = ta.barssince(momUp)
 recentBullTrigger = ((bsBottomDiv >= 0) and (bsBottomDiv <= bottomLinkBars)) or ((bsBottomMom >= 0) and (bsBottomMom <= bottomLinkBars))
-bottomSignal = canSignal and isBottomZone and (rsi <= bottomRsiMax) and histRecover and recentBullTrigger
+bottomSignal = canSignal and isBottomZone and (rsi <= bottomRsiMax + 2) and recentBullTrigger and (histRecover or bullDivSel)
 
 // 水平相場を除外した実シグナル（表示・アラート共通）
 momUpSig         = momUp and canSignal
@@ -308,16 +310,16 @@ if showLabels
         draw("DIV", colDivDn, false, labelSize), lastDivDn := bar_index, lastAnyDn := bar_index
 
     // Confirm
-    if showConfirm and bullConfirmedSig and allow(lastConfUp) and allow(lastAnyUp)
-        draw("CONF", colBull, true, labelSize), lastConfUp := bar_index, lastAnyUp := bar_index
-    if showConfirm and bearConfirmedSig and allow(lastConfDn) and allow(lastAnyDn)
-        draw("CONF", colBear, false, labelSize), lastConfDn := bar_index, lastAnyDn := bar_index
+    if showConfirm and bullConfirmedSig and allow(lastConfUp)
+        draw("CONF", colBull, true, labelSize), lastConfUp := bar_index
+    if showConfirm and bearConfirmedSig and allow(lastConfDn)
+        draw("CONF", colBear, false, labelSize), lastConfDn := bar_index
 
     // Combo
-    if showCombo and bullComboSig and allow(lastComboUp) and allow(lastAnyUp)
-        draw("CMB", colBull, true, labelSize), lastComboUp := bar_index, lastAnyUp := bar_index
-    if showCombo and bearComboSig and allow(lastComboDn) and allow(lastAnyDn)
-        draw("CMB", colBear, false, labelSize), lastComboDn := bar_index, lastAnyDn := bar_index
+    if showCombo and bullComboSig and allow(lastComboUp)
+        draw("CMB", colBull, true, labelSize), lastComboUp := bar_index
+    if showCombo and bearComboSig and allow(lastComboDn)
+        draw("CMB", colBear, false, labelSize), lastComboDn := bar_index
 
 
     // Bottom候補
@@ -325,10 +327,10 @@ if showLabels
         draw("BTM?", colBottom, false, labelSize), lastBottom := bar_index
 
     // Strong（高信頼）
-    if showStrong and bullReliableSig and allow(lastStrongUp) and allow(lastAnyUp)
-        drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.normal), lastStrongUp := bar_index, lastAnyUp := bar_index
-    if showStrong and bearReliableSig and allow(lastStrongDn) and allow(lastAnyDn)
-        drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.normal), lastStrongDn := bar_index, lastAnyDn := bar_index
+    if showStrong and bullReliableSig and allow(lastStrongUp)
+        drawAt(getYUpStrong(), "STRONG", colStrongUp, true, size.normal), lastStrongUp := bar_index
+    if showStrong and bearReliableSig and allow(lastStrongDn)
+        drawAt(getYDnStrong(), "STRONG", colStrongDn, false, size.normal), lastStrongDn := bar_index
 
 
 // ==========================================
