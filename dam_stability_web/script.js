@@ -69,22 +69,22 @@ function calc() {
   const h2 = h / 2;
   const B = (n + m) * h + b;
 
-  // 4 計算表（画像の算出フローに合わせた荷重分解）
+  // 4 計算表（提示画像の行構成と式に一致させる）
   const rows = [
-    ["D1", "n×h×h1×ω", n * h * h1 * omega, n * h / 3],
+    ["D1", "n×h²×1/2×ω", n * h * h * 0.5 * omega, (2 / 3) * n * h],
     ["D2", "b×h×ω", b * h * omega, n * h + b / 2],
-    ["D3", "m×h×h2×ω", m * h * h2 * omega, n * h + b + (m * h) / 3],
-    ["D4", "b×h'×γ", b * hp * gamma, n * h + b / 2],
+    ["D3", "m×h²×1/2×ω", m * h * h * 0.5 * omega, n * h + b + (m * h) / 3],
+    ["W1", "b×h'×γ", b * hp * gamma, n * h + b / 2],
 
-    ["W1", "m×h'×h2×γ", m * hp * h2 * gamma, n * h + b + (m * h2) / 2],
-    ["W2", "m×h1×h2×γ", m * h1 * h2 * gamma, n * h + b + (m * h1) / 2],
-    ["W3", "m×h1×h2×γ/2", m * h1 * h2 * gamma / 2, n * h + b + (m * h1) / 3],
-    ["E1", "m×h2×h2×s×c/2", m * h2 * h2 * s * c / 2, n * h + b + m * h2 + (m * h2) / 3],
+    ["W2", "m×h1×h'×γ", m * h1 * hp * gamma, n * h + b + (m * h1) / 2],
+    ["W3", "m×h2²×1/2×γ", m * h2 * h2 * 0.5 * gamma, n * h + b + (2 / 3) * m * h2],
+    ["W4", "m×h1×h2×γ", m * h1 * h2 * gamma, n * h + b + m * h2 + (m * h1) / 2],
+    ["E1", "m×h1²×1/2×s", m * h1 * h1 * 0.5 * s, n * h + b + m * h2 + (2 / 3) * m * h1],
 
-    ["W5", "h'×h2×γ", hp * h2 * gamma, h1 + h2 / 3],
-    ["W6", "h2×h2×γ/2", h2 * h2 * gamma / 2, h2 + h2 / 3],
-    ["E2", "(h'+h2)×h1×γ×c", (hp + h2) * h1 * gamma * c, h1 / 3],
-    ["E3", "h2×h2×s×c/2", h2 * h2 * s * c / 2, h1 / 3],
+    ["W5", "h'×h2×γ", hp * h2 * gamma, h1 + h2 / 2],
+    ["W6", "h2²×1/2×γ", h2 * h2 * 0.5 * gamma, h1 + h2 / 3],
+    ["E2", "(h'+h2)×γ×(1/s)×h1×s×c", (hp + h2) * gamma * h1 * c, h1 / 2],
+    ["E3", "h2²×1/2×s×c", h2 * h2 * 0.5 * s * c, h1 / 3],
   ];
 
   tbody.innerHTML = "";
