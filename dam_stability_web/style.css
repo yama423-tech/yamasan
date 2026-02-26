@@ -1,0 +1,19 @@
+:root { color-scheme: light; }
+body { font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; margin: 0; background:#f6f7fb; color:#111; }
+.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { margin: 0 0 8px; }
+.lead { margin: 0 0 16px; }
+.card { background:#fff; border:1px solid #d9dbe7; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.grid2 { display:grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+.fields { display:grid; grid-template-columns: 1fr 120px; gap:8px 10px; align-items:center; }
+.fields label { font-size: 14px; }
+.fields input { width:100%; padding:6px 8px; border:1px solid #c7cada; border-radius:6px; }
+table { width:100%; border-collapse: collapse; font-size: 14px; }
+th, td { border:1px solid #d9dbe7; padding: 6px 8px; }
+th { background:#f0f3ff; }
+.result-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.kpi { border:1px solid #d9dbe7; border-radius:8px; padding:10px; }
+.kpi h3 { margin:0 0 6px; font-size:14px; color:#334; }
+.kpi .v { font-size:20px; font-weight:700; }
+.pass { color:#0a7a2f; font-weight:700; }
+.fail { color:#c72222; font-weight:700; }
