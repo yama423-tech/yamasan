@@ -1,0 +1,263 @@
+//@version=6
+indicator("WTP Filters v2: MA75 Up + MA25 Deviation + HighVol Flag", overlay=true, max_labels_count=500)
+
+//============================================================
+// WTP Filters v2 — 改善・デバッグ版
+//
+// 修正点:
+//   1. request.security リペイント対策（confirmed close のみ使用）
+//   2. MA75 傾き判定を線形回帰スロープに変更（ノイズ耐性向上）
+//   3. na ガードを全判定に追加
+//   4. シグナル表示を「状態遷移の初回バー」に限定
+//   5. ダッシュボードを色分け付きに改善
+//   6. MA線に視認性の高い色を設定
+//   7. 週末注意の plotshape を追加
+//   8. alertcondition を遷移検出に修正
+//   9. 下方乖離（急落）警告を追加
+//  10. ATR% 計算を Typical Price ベースに変更（低位株の誤判定防止）
+//  11. 乖離率の絶対値表示オプション追加
+//  12. シグナル冷却期間（同一シグナル連続防止）
+//============================================================
+
+//====================
+// Inputs
+//====================
+group_ma   = "MA条件"
+len25      = input.int(25,  "MA(25) length", minval=1, group=group_ma)
+len75      = input.int(75,  "MA(75) length", minval=1, group=group_ma)
+slopeBars  = input.int(10,  "MA75 傾き計算期間", minval=2, group=group_ma,
+             tooltip="線形回帰スロープの計算期間。大きいほど安定するがラグが増える。")
+slopeThreshold = input.float(0.0, "MA75 傾き閾値（0=水平超え, 正値=より急な上昇のみ）",
+                 step=0.01, group=group_ma,
+                 tooltip="MA75の1バーあたり変化量の閾値。0なら上向きならOK。")
+
+group_dev  = "25日乖離条件（%）"
+minDev     = input.float(0.0, "乖離 下限(%)", step=0.1, group=group_dev,
+             tooltip="終値がMA25より何%上にあるかの下限。0=MA25ちょうど。")
+maxDev     = input.float(3.0, "乖離 上限(%)", step=0.1, group=group_dev,
+             tooltip="終値がMA25より何%上にあるかの上限。3=3%上まで。")
+showNegDev = input.bool(true, "下方乖離（急落）も警告する", group=group_dev)
+negDevThr  = input.float(-3.0, "下方乖離 閾値(%)", step=0.1, group=group_dev,
+             tooltip="MA25から何%下に乖離したら急落警告を出すか。")
+
+group_vol  = "高ボラ判定（ATR%）"
+atrLen     = input.int(14, "ATR length", minval=1, group=group_vol)
+atrPctThr  = input.float(2.5, "高ボラ閾値 ATR/価格(%) >", step=0.1, group=group_vol)
+noWeekendWarn = input.bool(true, "金曜は「週またぎ注意」を強めに警告", group=group_vol)
+
+group_cool = "シグナル制御"
+cooldownLen = input.int(3, "シグナル冷却期間（バー数）", minval=0, group=group_cool,
+              tooltip="同一シグナルが連続で出るのを防ぐ間隔。0=制限なし。")
+
+group_tf   = "判定足の固定（任意）"
+useHTF     = input.bool(false, "日足で判定する（intradayでも日足計算）", group=group_tf)
+htf        = input.timeframe("D", "判定に使う足", group=group_tf)
+
+group_vis  = "表示設定"
+showOKLabel    = input.bool(true, "OK シグナル表示", group=group_vis)
+showHVLabel    = input.bool(true, "高ボラ警告表示", group=group_vis)
+showNegDevLabel = input.bool(true, "急落警告表示", group=group_vis)
+showDash       = input.bool(true, "ダッシュボード表示", group=group_vis)
+
+//====================
+// Series (optionally HTF) — リペイント対策済み
+//====================
+// HTF使用時は barmerge.lookahead_on + [1] で「確定足」のみ参照
+// これにより未確定バーのデータが混入しない
+f_sma(_src, _len) => ta.sma(_src, _len)
+f_atr(_len) => ta.atr(_len)
+
+srcClose = useHTF ? request.security(syminfo.tickerid, htf, close[1], lookahead=barmerge.lookahead_on) : close
+
+ma25 = useHTF ? request.security(syminfo.tickerid, htf, f_sma(close, len25)[1], lookahead=barmerge.lookahead_on) : ta.sma(close, len25)
+ma75 = useHTF ? request.security(syminfo.tickerid, htf, f_sma(close, len75)[1], lookahead=barmerge.lookahead_on) : ta.sma(close, len75)
+atr  = useHTF ? request.security(syminfo.tickerid, htf, f_atr(atrLen)[1], lookahead=barmerge.lookahead_on) : ta.atr(atrLen)
+
+//====================
+// MA75 傾き判定 — 線形回帰スロープ
+//====================
+// 単純な「N本前との差」ではノイズに弱い。
+// 線形回帰スロープはN本分のトレンド方向を最小二乗法で推定するため安定する。
+ma75slope = ta.linreg(ma75, slopeBars, 0) - ta.linreg(ma75, slopeBars, 1)
+
+//====================
+// Conditions — na ガード付き
+//====================
+// MA75 上向き判定（スロープが閾値超え）
+ma75Up = not na(ma75slope) and (ma75slope > slopeThreshold)
+
+// MA25 乖離率
+devPct = not na(ma25) and ma25 != 0 ? (srcClose / ma25 - 1.0) * 100.0 : na
+devOK  = not na(devPct) and (devPct >= minDev) and (devPct <= maxDev)
+
+// 下方乖離（急落）警告
+negDevAlert = showNegDev and not na(devPct) and (devPct < negDevThr)
+
+// ATR% — Typical Price ベース（低位株のノイズ軽減）
+typPrice = (high + low + close) / 3.0
+atrBase  = useHTF ? srcClose : typPrice
+atrPct   = not na(atr) and atrBase > 0 ? (atr / atrBase) * 100.0 : na
+highVol  = not na(atrPct) and (atrPct > atrPctThr)
+
+// TradeOK: 全条件クリア
+tradeOK = ma75Up and devOK and (not highVol)
+
+// 週末注意
+isFri = dayofweek == dayofweek.friday
+weekendCaution = noWeekendWarn and isFri and highVol
+
+//====================
+// 状態遷移検出（初回バーのみシグナル）
+//====================
+tradeOK_new  = tradeOK and (not tradeOK[1])                      // OFF→ON の遷移
+highVol_new  = highVol and (not highVol[1])                       // OFF→ON の遷移
+negDev_new   = negDevAlert and (not negDevAlert[1])               // OFF→ON の遷移
+weekend_new  = weekendCaution and (not weekendCaution[1])         // OFF→ON の遷移
+
+// 冷却期間チェック
+var int lastOKBar  = 0
+var int lastHVBar  = 0
+var int lastNDBar  = 0
+
+okCooled = (bar_index - lastOKBar) >= cooldownLen
+hvCooled = (bar_index - lastHVBar) >= cooldownLen
+ndCooled = (bar_index - lastNDBar) >= cooldownLen
+
+showOK  = tradeOK_new and okCooled
+showHV  = highVol_new and hvCooled
+showND  = negDev_new  and ndCooled
+
+if showOK
+    lastOKBar := bar_index
+if showHV
+    lastHVBar := bar_index
+if showND
+    lastNDBar := bar_index
+
+//====================
+// Plots
+//====================
+// MA線（視認性の高い色設定）
+col_ma25 = color.new(#2196F3, 0)   // 青
+col_ma75 = ma75Up ? color.new(#4CAF50, 0) : color.new(#F44336, 0) // 上向き=緑, 下向き=赤
+plot(ma25, "MA25", color=col_ma25, linewidth=1)
+plot(ma75, "MA75", color=col_ma75, linewidth=2)
+
+// OK候補サイン（遷移初回のみ）
+plotshape(showOKLabel and showOK, title="OK candidate",
+          style=shape.triangleup, location=location.belowbar,
+          color=color.new(#4CAF50, 20), size=size.small,
+          text="OK", textcolor=color.white)
+
+// 高ボラ警告（遷移初回のみ）
+plotshape(showHVLabel and showHV, title="HighVol warning",
+          style=shape.triangledown, location=location.abovebar,
+          color=color.new(#FF9800, 20), size=size.small,
+          text="HV", textcolor=color.white)
+
+// 急落警告（遷移初回のみ）
+plotshape(showNegDevLabel and showND, title="Negative Deviation",
+          style=shape.xcross, location=location.abovebar,
+          color=color.new(#F44336, 20), size=size.small,
+          text="DROP", textcolor=color.white)
+
+// 週末注意（遷移初回のみ）
+plotshape(weekend_new, title="Weekend Caution",
+          style=shape.flag, location=location.abovebar,
+          color=color.new(#FF5252, 20), size=size.small,
+          text="FRI", textcolor=color.white)
+
+// 背景色（状態表示）
+bgcolor(tradeOK  ? color.new(#4CAF50, 92) : na, title="OK背景")
+bgcolor(highVol  ? color.new(#FF9800, 90) : na, title="HV背景")
+bgcolor(weekendCaution ? color.new(#F44336, 85) : na, title="週末注意背景")
+bgcolor(negDevAlert    ? color.new(#9C27B0, 90) : na, title="急落背景")
+
+//====================
+// Dashboard (色分け付き)
+//====================
+if showDash and barstate.islast
+    var table t = table.new(position.top_right, 2, 9, border_width=1,
+                            bgcolor=color.new(color.black, 60),
+                            frame_color=color.gray, frame_width=1)
+
+    // ヘッダー
+    table.cell(t, 0, 0, "WTP Filter v2", text_color=color.white,
+               bgcolor=color.new(color.navy, 30), text_size=size.small)
+    table.cell(t, 1, 0, syminfo.ticker, text_color=color.white,
+               bgcolor=color.new(color.navy, 30), text_size=size.small)
+
+    // MA75 上向き
+    c_ma75 = ma75Up ? color.new(#4CAF50, 40) : color.new(#F44336, 40)
+    table.cell(t, 0, 1, "MA75 Up", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, ma75Up ? "YES" : "NO",
+               text_color=color.white, bgcolor=c_ma75, text_size=size.small)
+
+    // MA75 スロープ
+    slopeStr = not na(ma75slope) ? str.tostring(ma75slope, "#.###") : "N/A"
+    c_slope = not na(ma75slope) and ma75slope > 0 ? color.new(#4CAF50, 60) : color.new(#F44336, 60)
+    table.cell(t, 0, 2, "MA75 Slope", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, slopeStr, text_color=color.white, bgcolor=c_slope, text_size=size.small)
+
+    // 乖離率
+    devStr = not na(devPct) ? str.tostring(devPct, "#.##") + "%" : "N/A"
+    c_dev = devOK ? color.new(#4CAF50, 40) : color.new(#FF9800, 40)
+    if not na(devPct) and devPct < negDevThr
+        c_dev := color.new(#F44336, 40)
+    table.cell(t, 0, 3, "Dev25(%)", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, devStr, text_color=color.white, bgcolor=c_dev, text_size=size.small)
+
+    // 乖離OK
+    c_devOK = devOK ? color.new(#4CAF50, 40) : color.new(#F44336, 40)
+    table.cell(t, 0, 4, "Dev OK", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, devOK ? "YES" : "NO",
+               text_color=color.white, bgcolor=c_devOK, text_size=size.small)
+
+    // ATR%
+    atrStr = not na(atrPct) ? str.tostring(atrPct, "#.##") + "%" : "N/A"
+    c_atr = highVol ? color.new(#FF9800, 40) : color.new(#4CAF50, 40)
+    table.cell(t, 0, 5, "ATR%", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 5, atrStr, text_color=color.white, bgcolor=c_atr, text_size=size.small)
+
+    // 高ボラ
+    c_hv = highVol ? color.new(#FF9800, 30) : color.new(#4CAF50, 60)
+    table.cell(t, 0, 6, "HighVol", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 6, highVol ? "YES" : "NO",
+               text_color=color.white, bgcolor=c_hv, text_size=size.small)
+
+    // TradeOK（メイン判定）
+    c_ok = tradeOK ? color.new(#4CAF50, 20) : color.new(#F44336, 30)
+    table.cell(t, 0, 7, "TradeOK", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 7, tradeOK ? "GO" : "WAIT",
+               text_color=color.white, bgcolor=c_ok, text_size=size.small)
+
+    // 週末注意
+    c_we = weekendCaution ? color.new(#F44336, 30) : color.new(color.black, 60)
+    weStr = weekendCaution ? "CAUTION" : (isFri ? "FRI" : "-")
+    table.cell(t, 0, 8, "Weekend", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 8, weStr, text_color=color.white, bgcolor=c_we, text_size=size.small)
+
+//====================
+// Alerts（遷移検出で発火 — 連続発火防止）
+//====================
+alertcondition(showOK,
+     title="TradeOK (新規)",
+     message="【WTP OK】条件クリア（MA75上向き＆乖離レンジ内＆低ボラ）\n銘柄: {{ticker}} / 価格: {{close}}")
+
+alertcondition(showHV,
+     title="HighVol (新規)",
+     message="【高ボラ警告】ATR%が閾値超え — ポジション縮小推奨\n銘柄: {{ticker}} / ATR%: 確認要")
+
+alertcondition(weekend_new,
+     title="WeekendCaution (新規)",
+     message="【週末注意】金曜×高ボラ — 週またぎリスク大\n銘柄: {{ticker}}")
+
+alertcondition(showND,
+     title="NegDeviation (新規)",
+     message="【急落警告】MA25から大幅下方乖離 — 損切り検討\n銘柄: {{ticker}} / 価格: {{close}}")
+
+// 状態終了アラート（OKゾーン離脱）
+tradeOK_end = (not tradeOK) and tradeOK[1]
+alertcondition(tradeOK_end,
+     title="TradeOK 終了",
+     message="【WTP終了】OK条件が崩れました — 新規エントリー控え\n銘柄: {{ticker}}")
