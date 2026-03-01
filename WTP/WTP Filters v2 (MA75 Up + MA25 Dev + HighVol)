@@ -1,0 +1,471 @@
+//@version=6
+//============================================================
+// WTP (When To Play) Filters v2.1 — エントリー判断サポート
+//
+// 【コア条件（3つすべて満たすと TradeOK）】
+//   1. MA75 上向き … 75日移動平均線の傾き（線形回帰）がプラス
+//   2. MA25 乖離率 … 終値がMA25から 0〜+3% の適正レンジ内
+//   3. 低ボラティリティ … ATR/価格(%) が閾値以下
+//
+// 【注意判定（黄色 CAUTION）】
+//   - 週末リスク … 金曜日 × 高ボラ
+//   - 祝日前リスク … 翌営業日までに日本祝日あり
+//   - SQ日 … 毎月第2金曜（メジャーSQ: 3,6,9,12月）
+//   - 決算前 … ユーザー指定の決算日からN日前
+//
+// 【信号機（総合判定）】
+//   GO      … TradeOK かつ注意なし → エントリー可
+//   CAUTION … TradeOK だが注意あり → 慎重に判断
+//   STOP    … TradeOK でない → 見送り推奨
+//
+// 【チャート上の表示】
+//   ▲ OK      … エントリー候補（状態遷移の初回バーのみ）
+//   ▼ HV      … 高ボラ警告
+//   ✕ DROP    … MA25から大幅下方乖離（急落警告）
+//   HOLIDAY   … 祝日前注意
+//   ◆ SQ      … SQ日/前日注意
+//   EARN      … 決算前注意
+//   背景色    … 緑=OK / 橙=高ボラ / 桃=祝日前 / 紫=SQ / 赤=急落
+//============================================================
+indicator("WTP Filters v2.1", shorttitle="WTP v2.1", overlay=true, max_labels_count=500)
+
+//====================
+// Inputs
+//====================
+group_ma   = "MA条件（トレンド判定）"
+len25      = input.int(25,  "MA(25) 期間", minval=1, group=group_ma,
+             tooltip="短期移動平均線の期間。乖離率の基準に使用。")
+len75      = input.int(75,  "MA(75) 期間", minval=1, group=group_ma,
+             tooltip="中期移動平均線の期間。傾きでトレンド方向を判定。")
+slopeBars  = input.int(10,  "MA75 傾き計算期間", minval=2, group=group_ma,
+             tooltip="線形回帰スロープの計算バー数。大きいほど安定するがラグが増える。推奨: 5〜20")
+slopeThreshold = input.float(0.0, "MA75 傾き閾値", step=0.01, group=group_ma,
+                 tooltip="MA75の1バーあたり変化量の閾値。\n0 = 上向きならOK\n正の値 = より急な上昇のみ許可")
+
+group_dev  = "MA25 乖離率（押し目判定）"
+minDev     = input.float(0.0, "乖離 下限(%)", step=0.1, group=group_dev,
+             tooltip="終値がMA25から何%上にあるかの下限。\n0 = MA25ちょうど（押し目買い水準）")
+maxDev     = input.float(3.0, "乖離 上限(%)", step=0.1, group=group_dev,
+             tooltip="終値がMA25から何%上にあるかの上限。\n3 = 3%上まで許容（過熱気味を除外）")
+showNegDev = input.bool(true, "下方乖離（急落）も警告する", group=group_dev,
+             tooltip="ONにするとMA25から大きく下に離れた場合に急落警告を表示。")
+negDevThr  = input.float(-3.0, "下方乖離 閾値(%)", step=0.1, group=group_dev,
+             tooltip="この値を下回るとチャート上に DROP 警告を表示。\n例: -3.0 = MA25から3%以上下落で警告")
+
+group_vol  = "ボラティリティ判定（ATR%）"
+atrLen     = input.int(14, "ATR 期間", minval=1, group=group_vol,
+             tooltip="ATR（平均真の値幅）の計算期間。通常14で十分。")
+atrPctThr  = input.float(2.5, "高ボラ閾値 (%)", step=0.1, group=group_vol,
+             tooltip="ATR ÷ 価格 × 100 がこの値を超えると高ボラ判定。\n値動きが荒い=ギャップリスク大 → エントリー非推奨。\n目安: 日経225先物=2.0〜3.0, 個別株=3.0〜5.0")
+
+group_holiday = "祝日・連休リスク判定"
+enableHoliday  = input.bool(true, "日本祝日カレンダーで判定する", group=group_holiday,
+                 tooltip="翌5暦日以内に祝日があれば注意判定。\n固定祝日・ハッピーマンデー・振替休日に対応。\n連休前のギャップリスクを事前検出します。")
+holidayNeedsHV = input.bool(false, "祝日前も高ボラ時のみ注意にする", group=group_holiday,
+                 tooltip="OFF = 祝日前は常に CAUTION\nON  = 祝日前 かつ 高ボラ時のみ CAUTION\n低ボラ相場ではギャップリスク小と判断する場合にON。")
+
+group_sq = "SQ日判定（先物清算日）"
+enableSQ   = input.bool(true, "SQ日を判定する", group=group_sq,
+             tooltip="SQ = 毎月第2金曜日（先物・オプション清算日）。\nSQ当日・前日は出来高急増で値動きが荒れやすい。")
+sqMode     = input.string("全SQ（毎月）", "SQ判定範囲",
+             options=["全SQ（毎月）", "メジャーSQのみ（3,6,9,12月）"], group=group_sq,
+             tooltip="全SQ = 毎月の第2金曜を検出\nメジャーSQのみ = 3,6,9,12月の第2金曜のみ検出\nメジャーSQは特に値動きが大きくなりやすい。")
+
+group_earn = "決算日判定（個別銘柄用）"
+enableEarnings    = input.bool(false, "決算前注意を有効にする", group=group_earn,
+                    tooltip="ONにして決算日を入力すると、決算N日前から注意表示。\n決算発表前後は急騰・急落リスクが高い。")
+earningsDaysBefore = input.int(2, "決算何日前から注意", minval=0, maxval=10, group=group_earn,
+                     tooltip="決算日の何営業日前から CAUTION を表示するか。\n推奨: 1〜3日前")
+earningsDate1 = input.time(timestamp("2000-01-01"), "決算日 1 (Q1)", group=group_earn,
+                tooltip="第1四半期の決算発表日を入力")
+earningsDate2 = input.time(timestamp("2000-01-01"), "決算日 2 (Q2)", group=group_earn,
+                tooltip="第2四半期の決算発表日を入力")
+earningsDate3 = input.time(timestamp("2000-01-01"), "決算日 3 (Q3)", group=group_earn,
+                tooltip="第3四半期の決算発表日を入力")
+earningsDate4 = input.time(timestamp("2000-01-01"), "決算日 4 (Q4)", group=group_earn,
+                tooltip="第4四半期（本決算）の決算発表日を入力")
+
+group_cool = "シグナル制御"
+cooldownLen = input.int(3, "冷却期間（バー数）", minval=0, group=group_cool,
+              tooltip="同一シグナルが連続で出るのを防ぐ間隔。\n0 = 制限なし（状態遷移のたびに表示）\n3 = 前回シグナルから3バー以内は抑制")
+
+group_tf   = "判定足の固定（上位足参照）"
+useHTF     = input.bool(false, "上位足で判定する", group=group_tf,
+             tooltip="ONにすると指定した時間足のデータで条件判定。\n分足チャートでも日足ベースの判定が可能。\nリペイント対策済み（確定足のみ使用）。")
+htf        = input.timeframe("D", "判定に使う足", group=group_tf,
+             tooltip="D=日足, W=週足, 60=1時間足 など")
+
+group_vis  = "表示設定"
+showOKLabel     = input.bool(true, "▲ OK シグナル表示", group=group_vis,
+                  tooltip="チャート上に緑の ▲OK マークを表示")
+showHVLabel     = input.bool(true, "▼ 高ボラ警告表示", group=group_vis,
+                  tooltip="チャート上にオレンジの ▼HV マークを表示")
+showNegDevLabel = input.bool(true, "✕ 急落警告表示", group=group_vis,
+                  tooltip="チャート上に赤の ✕DROP マークを表示")
+showDash        = input.bool(true, "ダッシュボード（右上テーブル）", group=group_vis,
+                  tooltip="チャート右上にリアルタイム判定テーブルを表示")
+
+//====================
+// 日本祝日判定関数
+//====================
+// 固定祝日（日付が毎年同じ）
+// 元日, 建国記念の日, 天皇誕生日, 春分の日, 昭和の日,
+// 憲法記念日, みどりの日, こどもの日, 山の日, 秋分の日, 文化の日, 勤労感謝の日
+f_isJPFixedHoliday(_m, _d) =>
+    _jan = _m == 1 and _d == 1
+    _feb = _m == 2 and (_d == 11 or _d == 23)
+    _mar = _m == 3 and (_d == 20 or _d == 21)
+    _apr = _m == 4 and _d == 29
+    _may = _m == 5 and (_d == 3 or _d == 4 or _d == 5)
+    _aug = _m == 8 and _d == 11
+    _sep = _m == 9 and (_d == 22 or _d == 23)
+    _nov = _m == 11 and (_d == 3 or _d == 23)
+    _jan or _feb or _mar or _apr or _may or _aug or _sep or _nov
+
+// ハッピーマンデー祝日（第N月曜日）
+// 成人の日(1月第2月曜), 海の日(7月第3月曜), 敬老の日(9月第3月曜), スポーツの日(10月第2月曜)
+f_isJPHappyMonday(_m, _d, _dow) =>
+    _isMon = _dow == dayofweek.monday
+    _jan = _m == 1  and _isMon and _d >= 8  and _d <= 14
+    _jul = _m == 7  and _isMon and _d >= 15 and _d <= 21
+    _sep = _m == 9  and _isMon and _d >= 15 and _d <= 21
+    _oct = _m == 10 and _isMon and _d >= 8  and _d <= 14
+    _jan or _jul or _sep or _oct
+
+// 統合判定（固定 + ハッピーマンデー + 振替休日）
+// 振替休日: 日曜が祝日 → 翌月曜が休み
+f_isJPHoliday(_m, _d, _dow) =>
+    _isFixed = f_isJPFixedHoliday(_m, _d)
+    _isHappy = f_isJPHappyMonday(_m, _d, _dow)
+    _isSub = (_dow == dayofweek.monday) and (_d > 1) and f_isJPFixedHoliday(_m, _d - 1)
+    _isFixed or _isHappy or _isSub
+
+//====================
+// SQ日判定関数
+//====================
+// SQ = 毎月第2金曜日（先物・オプション清算日）
+// メジャーSQ = 3,6,9,12月の第2金曜日
+f_isSQDay(_m, _d, _dow) =>
+    _isFri = _dow == dayofweek.friday
+    _is2ndWeek = _d >= 8 and _d <= 14
+    _isFri and _is2ndWeek
+
+f_isMajorSQMonth(_m) =>
+    _m == 3 or _m == 6 or _m == 9 or _m == 12
+
+//====================
+// Series (optionally HTF) — リペイント対策済み
+//====================
+f_sma(_src, _len) => ta.sma(_src, _len)
+f_atr(_len) => ta.atr(_len)
+
+srcClose = useHTF ? request.security(syminfo.tickerid, htf, close[1], lookahead=barmerge.lookahead_on) : close
+ma25 = useHTF ? request.security(syminfo.tickerid, htf, f_sma(close, len25)[1], lookahead=barmerge.lookahead_on) : ta.sma(close, len25)
+ma75 = useHTF ? request.security(syminfo.tickerid, htf, f_sma(close, len75)[1], lookahead=barmerge.lookahead_on) : ta.sma(close, len75)
+atr  = useHTF ? request.security(syminfo.tickerid, htf, f_atr(atrLen)[1], lookahead=barmerge.lookahead_on) : ta.atr(atrLen)
+
+//====================
+// MA75 傾き判定 — 線形回帰スロープ
+//====================
+ma75slope = ta.linreg(ma75, slopeBars, 0) - ta.linreg(ma75, slopeBars, 1)
+
+//====================
+// コア条件 — na ガード付き
+//====================
+ma75Up = not na(ma75slope) and (ma75slope > slopeThreshold)
+
+devPct = not na(ma25) and ma25 != 0 ? (srcClose / ma25 - 1.0) * 100.0 : na
+devOK  = not na(devPct) and (devPct >= minDev) and (devPct <= maxDev)
+
+negDevAlert = showNegDev and not na(devPct) and (devPct < negDevThr)
+
+typPrice = (high + low + close) / 3.0
+atrBase  = useHTF ? srcClose : typPrice
+atrPct   = not na(atr) and atrBase > 0 ? (atr / atrBase) * 100.0 : na
+highVol  = not na(atrPct) and (atrPct > atrPctThr)
+
+tradeOK = ma75Up and devOK and (not highVol)
+
+//====================
+// 祝日前判定（翌5暦日以内の平日祝日を検出）
+//====================
+MS_PER_DAY = 86400000
+
+preHoliday = false
+if enableHoliday
+    for i = 1 to 5
+        futureTime = time + MS_PER_DAY * i
+        fm  = month(futureTime)
+        fd  = dayofmonth(futureTime)
+        fdw = dayofweek(futureTime)
+        // 平日（月〜金）のみチェック — 土日はそもそも休場
+        if fdw >= dayofweek.monday and fdw <= dayofweek.friday
+            if f_isJPHoliday(fm, fd, fdw)
+                preHoliday := true
+
+// 祝日注意: 祝日前 AND（常時 or 高ボラ時のみ）
+holidayCaution = preHoliday and (not holidayNeedsHV or highVol)
+
+//====================
+// SQ日判定
+//====================
+sqMajorOnly = sqMode == "メジャーSQのみ（3,6,9,12月）"
+
+curMonth = month
+curDOM   = dayofmonth
+curDOW   = dayofweek
+
+// 当日がSQ日
+isSQToday = enableSQ and f_isSQDay(curMonth, curDOM, curDOW) and (not sqMajorOnly or f_isMajorSQMonth(curMonth))
+
+// SQ前日（木曜で翌日が第2金曜＝SQ日）
+isPreSQ = enableSQ and (curDOW == dayofweek.thursday) and (curDOM >= 7 and curDOM <= 13) and (not sqMajorOnly or f_isMajorSQMonth(curMonth))
+
+sqCaution = isSQToday or isPreSQ
+
+//====================
+// 決算前判定
+//====================
+earnBufMs = earningsDaysBefore * MS_PER_DAY
+
+daysToE1 = (earningsDate1 - time) / MS_PER_DAY
+daysToE2 = (earningsDate2 - time) / MS_PER_DAY
+daysToE3 = (earningsDate3 - time) / MS_PER_DAY
+daysToE4 = (earningsDate4 - time) / MS_PER_DAY
+
+isNearE1 = daysToE1 >= 0 and daysToE1 <= earningsDaysBefore
+isNearE2 = daysToE2 >= 0 and daysToE2 <= earningsDaysBefore
+isNearE3 = daysToE3 >= 0 and daysToE3 <= earningsDaysBefore
+isNearE4 = daysToE4 >= 0 and daysToE4 <= earningsDaysBefore
+
+earningsCaution = enableEarnings and (isNearE1 or isNearE2 or isNearE3 or isNearE4)
+
+//====================
+// 週末・ギャップ注意（統合）
+//====================
+isFri = dayofweek == dayofweek.friday
+weekendCaution = isFri and highVol  // 金曜 × 高ボラ
+
+// 総合ギャップリスク: 週末 or 祝日前
+gapCaution = weekendCaution or holidayCaution
+
+// 総合イベントリスク: SQ or 決算
+eventCaution = sqCaution or earningsCaution
+
+// 全注意の統合
+anyCaution = gapCaution or eventCaution
+
+//====================
+// 総合判定（信号機）
+//====================
+// GREEN  = TradeOK かつ注意なし → GO
+// YELLOW = TradeOK だが注意あり → CAUTION
+// RED    = TradeOK でない or 重大警告 → STOP
+signalGo      = tradeOK and (not anyCaution)
+signalCaution = tradeOK and anyCaution
+signalStop    = not tradeOK
+
+//====================
+// 状態遷移検出（初回バーのみシグナル）
+//====================
+tradeOK_new    = tradeOK and (not tradeOK[1])
+highVol_new    = highVol and (not highVol[1])
+negDev_new     = negDevAlert and (not negDevAlert[1])
+holiday_new    = holidayCaution and (not holidayCaution[1])
+sq_new         = sqCaution and (not sqCaution[1])
+earnings_new   = earningsCaution and (not earningsCaution[1])
+
+// 冷却期間チェック
+var int lastOKBar  = 0
+var int lastHVBar  = 0
+var int lastNDBar  = 0
+
+okCooled = (bar_index - lastOKBar) >= cooldownLen
+hvCooled = (bar_index - lastHVBar) >= cooldownLen
+ndCooled = (bar_index - lastNDBar) >= cooldownLen
+
+showOK  = tradeOK_new and okCooled
+showHV  = highVol_new and hvCooled
+showND  = negDev_new  and ndCooled
+
+if showOK
+    lastOKBar := bar_index
+if showHV
+    lastHVBar := bar_index
+if showND
+    lastNDBar := bar_index
+
+//====================
+// Plots
+//====================
+col_ma25 = color.new(#2196F3, 0)
+col_ma75 = ma75Up ? color.new(#4CAF50, 0) : color.new(#F44336, 0)
+plot(ma25, "MA25（短期）", color=col_ma25, linewidth=1)
+plot(ma75, "MA75（中期・トレンド）", color=col_ma75, linewidth=2)
+
+// OK候補（遷移初回のみ）
+plotshape(showOKLabel and showOK, title="▲ エントリー候補",
+          style=shape.triangleup, location=location.belowbar,
+          color=color.new(#4CAF50, 20), size=size.small,
+          text="OK", textcolor=color.white)
+
+// 高ボラ警告（遷移初回のみ）
+plotshape(showHVLabel and showHV, title="▼ 高ボラ警告",
+          style=shape.triangledown, location=location.abovebar,
+          color=color.new(#FF9800, 20), size=size.small,
+          text="HV", textcolor=color.white)
+
+// 急落警告（遷移初回のみ）
+plotshape(showNegDevLabel and showND, title="✕ 急落警告（下方乖離）",
+          style=shape.xcross, location=location.abovebar,
+          color=color.new(#F44336, 20), size=size.small,
+          text="DROP", textcolor=color.white)
+
+// 祝日前注意（遷移初回のみ）
+plotshape(holiday_new, title="祝日前注意",
+          style=shape.flag, location=location.abovebar,
+          color=color.new(#E91E63, 20), size=size.small,
+          text="HOLIDAY", textcolor=color.white)
+
+// SQ注意（遷移初回のみ）
+plotshape(sq_new, title="SQ日注意",
+          style=shape.diamond, location=location.abovebar,
+          color=color.new(#9C27B0, 20), size=size.small,
+          text="SQ", textcolor=color.white)
+
+// 決算前注意（遷移初回のみ）
+plotshape(earnings_new, title="決算前注意",
+          style=shape.flag, location=location.abovebar,
+          color=color.new(#FF5722, 20), size=size.small,
+          text="EARN", textcolor=color.white)
+
+// 背景色
+bgcolor(tradeOK        ? color.new(#4CAF50, 92) : na, title="背景: TradeOK（緑）")
+bgcolor(highVol        ? color.new(#FF9800, 90) : na, title="背景: 高ボラ（橙）")
+bgcolor(holidayCaution ? color.new(#E91E63, 88) : na, title="背景: 祝日前（桃）")
+bgcolor(sqCaution      ? color.new(#9C27B0, 90) : na, title="背景: SQ日（紫）")
+bgcolor(earningsCaution? color.new(#FF5722, 88) : na, title="背景: 決算前（赤橙）")
+bgcolor(negDevAlert    ? color.new(#F44336, 90) : na, title="背景: 急落警告（赤）")
+
+//====================
+// Dashboard（拡張版・色分け付き）
+//====================
+var table t = table.new(position.top_right, 2, 13, border_width=1,
+                        bgcolor=color.new(color.black, 60),
+                        frame_color=color.gray, frame_width=1)
+
+if barstate.islast and showDash
+    // Row 0: ヘッダー（信号機色）
+    headerBg = signalGo ? color.new(#4CAF50, 20) : signalCaution ? color.new(#FF9800, 20) : color.new(#F44336, 20)
+    headerTxt = signalGo ? "GO" : signalCaution ? "CAUTION" : "STOP"
+    table.cell(t, 0, 0, "WTP v2.1", text_color=color.white,
+               bgcolor=headerBg, text_size=size.small)
+    table.cell(t, 1, 0, headerTxt + " | " + syminfo.ticker, text_color=color.white,
+               bgcolor=headerBg, text_size=size.small)
+
+    // Row 1: MA75 Up
+    c_ma75 = ma75Up ? color.new(#4CAF50, 40) : color.new(#F44336, 40)
+    table.cell(t, 0, 1, "MA75 Up", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, ma75Up ? "YES" : "NO",
+               text_color=color.white, bgcolor=c_ma75, text_size=size.small)
+
+    // Row 2: MA75 Slope
+    slopeStr = not na(ma75slope) ? str.tostring(ma75slope, "#.###") : "N/A"
+    c_slope = not na(ma75slope) and ma75slope > 0 ? color.new(#4CAF50, 60) : color.new(#F44336, 60)
+    table.cell(t, 0, 2, "MA75 Slope", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, slopeStr, text_color=color.white, bgcolor=c_slope, text_size=size.small)
+
+    // Row 3: 乖離率
+    devStr = not na(devPct) ? str.tostring(devPct, "#.##") + "%" : "N/A"
+    c_dev = devOK ? color.new(#4CAF50, 40) : color.new(#FF9800, 40)
+    if not na(devPct) and devPct < negDevThr
+        c_dev := color.new(#F44336, 40)
+    table.cell(t, 0, 3, "Dev25(%)", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, devStr, text_color=color.white, bgcolor=c_dev, text_size=size.small)
+
+    // Row 4: ATR%
+    atrStr = not na(atrPct) ? str.tostring(atrPct, "#.##") + "%" : "N/A"
+    c_atr = highVol ? color.new(#FF9800, 40) : color.new(#4CAF50, 40)
+    table.cell(t, 0, 4, "ATR%", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, atrStr, text_color=color.white, bgcolor=c_atr, text_size=size.small)
+
+    // Row 5: TradeOK
+    c_ok = tradeOK ? color.new(#4CAF50, 20) : color.new(#F44336, 30)
+    table.cell(t, 0, 5, "TradeOK", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 5, tradeOK ? "GO" : "WAIT",
+               text_color=color.white, bgcolor=c_ok, text_size=size.small)
+
+    // Row 6: 区切り線
+    table.cell(t, 0, 6, "--- 注意判定 ---", text_color=color.gray,
+               bgcolor=color.new(color.black, 70), text_size=size.tiny)
+    table.cell(t, 1, 6, "", bgcolor=color.new(color.black, 70), text_size=size.tiny)
+
+    // Row 7: 週末（金曜×高ボラ）
+    c_we = weekendCaution ? color.new(#F44336, 30) : color.new(color.black, 60)
+    weStr = weekendCaution ? "CAUTION" : (isFri ? "FRI" : "-")
+    table.cell(t, 0, 7, "Weekend", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 7, weStr, text_color=color.white, bgcolor=c_we, text_size=size.small)
+
+    // Row 8: 祝日前
+    c_hol = holidayCaution ? color.new(#E91E63, 30) : preHoliday ? color.new(#E91E63, 70) : color.new(color.black, 60)
+    holStr = holidayCaution ? "CAUTION" : (preHoliday ? "検出あり" : "-")
+    table.cell(t, 0, 8, "Holiday", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 8, holStr, text_color=color.white, bgcolor=c_hol, text_size=size.small)
+
+    // Row 9: SQ
+    c_sq = isSQToday ? color.new(#9C27B0, 20) : isPreSQ ? color.new(#9C27B0, 50) : color.new(color.black, 60)
+    sqStr = isSQToday ? (f_isMajorSQMonth(curMonth) ? "MAJOR SQ" : "SQ DAY") : isPreSQ ? "SQ前日" : "-"
+    table.cell(t, 0, 9, "SQ", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 9, sqStr, text_color=color.white, bgcolor=c_sq, text_size=size.small)
+
+    // Row 10: 決算
+    c_earn = earningsCaution ? color.new(#FF5722, 30) : color.new(color.black, 60)
+    earnStr = earningsCaution ? "CAUTION" : (enableEarnings ? "圏外" : "OFF")
+    table.cell(t, 0, 10, "Earnings", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 10, earnStr, text_color=color.white, bgcolor=c_earn, text_size=size.small)
+
+    // Row 11: 区切り線
+    table.cell(t, 0, 11, "--- 総合判定 ---", text_color=color.gray,
+               bgcolor=color.new(color.black, 70), text_size=size.tiny)
+    table.cell(t, 1, 11, "", bgcolor=color.new(color.black, 70), text_size=size.tiny)
+
+    // Row 12: 総合判定（信号機）
+    c_signal = signalGo ? color.new(#4CAF50, 10) : signalCaution ? color.new(#FF9800, 10) : color.new(#F44336, 10)
+    sigStr = signalGo ? "GO — エントリー可" : signalCaution ? "CAUTION — 注意して判断" : "STOP — 見送り推奨"
+    table.cell(t, 0, 12, "Signal", text_color=color.white, text_size=size.small,
+               bgcolor=c_signal)
+    table.cell(t, 1, 12, sigStr, text_color=color.white, text_size=size.small,
+               bgcolor=c_signal)
+
+//====================
+// Alerts（遷移検出で発火）
+//====================
+alertcondition(showOK,
+     title="TradeOK (新規)",
+     message="【WTP OK】条件クリア（MA75上向き＆乖離レンジ内＆低ボラ）\n銘柄: {{ticker}} / 価格: {{close}}")
+
+alertcondition(showHV,
+     title="HighVol (新規)",
+     message="【高ボラ警告】ATR%が閾値超え — ポジション縮小推奨\n銘柄: {{ticker}}")
+
+alertcondition(holiday_new,
+     title="Holiday Caution (新規)",
+     message="【祝日前注意】翌営業日までに祝日あり — ギャップリスク注意\n銘柄: {{ticker}}")
+
+alertcondition(sq_new,
+     title="SQ Caution (新規)",
+     message="【SQ注意】SQ日またはSQ前日 — 値動き荒れ注意\n銘柄: {{ticker}}")
+
+alertcondition(earnings_new,
+     title="Earnings Caution (新規)",
+     message="【決算前注意】決算発表が近い — イベントリスク注意\n銘柄: {{ticker}}")
+
+alertcondition(showND,
+     title="NegDeviation (新規)",
+     message="【急落警告】MA25から大幅下方乖離 — 損切り検討\n銘柄: {{ticker}} / 価格: {{close}}")
+
+// 状態終了アラート
+tradeOK_end = (not tradeOK) and tradeOK[1]
+alertcondition(tradeOK_end,
+     title="TradeOK 終了",
+     message="【WTP終了】OK条件が崩れました — 新規エントリー控え\n銘柄: {{ticker}}")
