@@ -85,27 +85,25 @@ showDash        = input.bool(true, "ダッシュボード表示", group=group_vi
 // 元日, 建国記念の日, 天皇誕生日, 春分の日, 昭和の日,
 // 憲法記念日, みどりの日, こどもの日, 山の日, 秋分の日, 文化の日, 勤労感謝の日
 f_isJPFixedHoliday(_m, _d) =>
-    (_m == 1  and _d == 1) or
-    (_m == 2  and _d == 11) or
-    (_m == 2  and _d == 23) or
-    (_m == 3  and (_d == 20 or _d == 21)) or
-    (_m == 4  and _d == 29) or
-    (_m == 5  and _d == 3) or
-    (_m == 5  and _d == 4) or
-    (_m == 5  and _d == 5) or
-    (_m == 8  and _d == 11) or
-    (_m == 9  and (_d == 22 or _d == 23)) or
-    (_m == 11 and _d == 3) or
-    (_m == 11 and _d == 23)
+    _jan = _m == 1 and _d == 1
+    _feb = _m == 2 and (_d == 11 or _d == 23)
+    _mar = _m == 3 and (_d == 20 or _d == 21)
+    _apr = _m == 4 and _d == 29
+    _may = _m == 5 and (_d == 3 or _d == 4 or _d == 5)
+    _aug = _m == 8 and _d == 11
+    _sep = _m == 9 and (_d == 22 or _d == 23)
+    _nov = _m == 11 and (_d == 3 or _d == 23)
+    _jan or _feb or _mar or _apr or _may or _aug or _sep or _nov
 
 // ハッピーマンデー祝日（第N月曜日）
 // 成人の日(1月第2月曜), 海の日(7月第3月曜), 敬老の日(9月第3月曜), スポーツの日(10月第2月曜)
 f_isJPHappyMonday(_m, _d, _dow) =>
     _isMon = _dow == dayofweek.monday
-    (_m == 1  and _isMon and _d >= 8  and _d <= 14) or
-    (_m == 7  and _isMon and _d >= 15 and _d <= 21) or
-    (_m == 9  and _isMon and _d >= 15 and _d <= 21) or
-    (_m == 10 and _isMon and _d >= 8  and _d <= 14)
+    _jan = _m == 1  and _isMon and _d >= 8  and _d <= 14
+    _jul = _m == 7  and _isMon and _d >= 15 and _d <= 21
+    _sep = _m == 9  and _isMon and _d >= 15 and _d <= 21
+    _oct = _m == 10 and _isMon and _d >= 8  and _d <= 14
+    _jan or _jul or _sep or _oct
 
 // 統合判定（固定 + ハッピーマンデー + 振替休日）
 // 振替休日: 日曜が祝日 → 翌月曜が休み
