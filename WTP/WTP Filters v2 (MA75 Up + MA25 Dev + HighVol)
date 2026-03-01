@@ -1,82 +1,106 @@
 //@version=6
-indicator("WTP Filters v2: MA75 Up + MA25 Deviation + HighVol Flag", overlay=true, max_labels_count=500)
-
-//============================================================
-// WTP Filters v2.1 — 拡張注意判定版
-//
-// v2 からの追加:
-//  13. 日本祝日カレンダー自動判定（祝日前＝実質金曜を検出）
-//  14. SQ日判定（毎月第2金曜 / メジャーSQは3,6,9,12月）
-//  15. 決算日前注意（ユーザー入力の決算日から逆算）
-//  16. 総合注意レベル（信号機表示: GO / CAUTION / STOP）
-//
-// 既存修正（v2）:
-//   1. request.security リペイント対策
-//   2. MA75 傾き → 線形回帰スロープ
-//   3. na ガード
-//   4. 状態遷移の初回バーのみシグナル
-//   5. 色分けダッシュボード
-//   6-12. その他改善（詳細は v2 コメント参照）
-//============================================================
+indicator("WTP Filters v2.1",
+     overlay=true,
+     max_labels_count=500,
+     shorttitle="WTP v2.1",
+     description="WTP (When To Play) Filters v2.1 — エントリー判断サポート\n\n" +
+     "【コア条件（3つすべて満たすと TradeOK）】\n" +
+     "  1. MA75 上向き … 75日移動平均線の傾き（線形回帰）がプラス\n" +
+     "  2. MA25 乖離率 … 終値がMA25から 0〜+3% の適正レンジ内\n" +
+     "  3. 低ボラティリティ … ATR/価格(%) が閾値以下\n\n" +
+     "【注意判定（黄色 CAUTION）】\n" +
+     "  - 週末リスク … 金曜日 × 高ボラ\n" +
+     "  - 祝日前リスク … 翌営業日までに日本祝日あり\n" +
+     "  - SQ日 … 毎月第2金曜（メジャーSQ: 3,6,9,12月）\n" +
+     "  - 決算前 … ユーザー指定の決算日からN日前\n\n" +
+     "【信号機（総合判定）】\n" +
+     "  🟢 GO … TradeOK かつ注意なし → エントリー可\n" +
+     "  🟡 CAUTION … TradeOK だが注意あり → 慎重に判断\n" +
+     "  🔴 STOP … TradeOK でない → 見送り推奨\n\n" +
+     "【チャート上の表示】\n" +
+     "  ▲ OK … エントリー候補（状態遷移の初回バーのみ）\n" +
+     "  ▼ HV … 高ボラ警告\n" +
+     "  ✕ DROP … MA25から大幅下方乖離（急落警告）\n" +
+     "  🚩 HOLIDAY … 祝日前注意\n" +
+     "  ◆ SQ … SQ日/前日注意\n" +
+     "  🚩 EARN … 決算前注意\n" +
+     "  背景色 … 緑=OK / オレンジ=高ボラ / ピンク=祝日前 / 紫=SQ / 赤=急落")
 
 //====================
 // Inputs
 //====================
-group_ma   = "MA条件"
-len25      = input.int(25,  "MA(25) length", minval=1, group=group_ma)
-len75      = input.int(75,  "MA(75) length", minval=1, group=group_ma)
+group_ma   = "MA条件（トレンド判定）"
+len25      = input.int(25,  "MA(25) 期間", minval=1, group=group_ma,
+             tooltip="短期移動平均線の期間。乖離率の基準に使用。")
+len75      = input.int(75,  "MA(75) 期間", minval=1, group=group_ma,
+             tooltip="中期移動平均線の期間。傾きでトレンド方向を判定。")
 slopeBars  = input.int(10,  "MA75 傾き計算期間", minval=2, group=group_ma,
-             tooltip="線形回帰スロープの計算期間。大きいほど安定するがラグが増える。")
-slopeThreshold = input.float(0.0, "MA75 傾き閾値（0=水平超え, 正値=より急な上昇のみ）",
-                 step=0.01, group=group_ma,
-                 tooltip="MA75の1バーあたり変化量の閾値。0なら上向きならOK。")
+             tooltip="線形回帰スロープの計算バー数。大きいほど安定するがラグが増える。推奨: 5〜20")
+slopeThreshold = input.float(0.0, "MA75 傾き閾値", step=0.01, group=group_ma,
+                 tooltip="MA75の1バーあたり変化量の閾値。\n0 = 上向きならOK\n正の値 = より急な上昇のみ許可")
 
-group_dev  = "25日乖離条件（%）"
+group_dev  = "MA25 乖離率（押し目判定）"
 minDev     = input.float(0.0, "乖離 下限(%)", step=0.1, group=group_dev,
-             tooltip="終値がMA25より何%上にあるかの下限。0=MA25ちょうど。")
+             tooltip="終値がMA25から何%上にあるかの下限。\n0 = MA25ちょうど（押し目買い水準）")
 maxDev     = input.float(3.0, "乖離 上限(%)", step=0.1, group=group_dev,
-             tooltip="終値がMA25より何%上にあるかの上限。3=3%上まで。")
-showNegDev = input.bool(true, "下方乖離（急落）も警告する", group=group_dev)
+             tooltip="終値がMA25から何%上にあるかの上限。\n3 = 3%上まで許容（過熱気味を除外）")
+showNegDev = input.bool(true, "下方乖離（急落）も警告する", group=group_dev,
+             tooltip="ONにするとMA25から大きく下に離れた場合に急落警告を表示。")
 negDevThr  = input.float(-3.0, "下方乖離 閾値(%)", step=0.1, group=group_dev,
-             tooltip="MA25から何%下に乖離したら急落警告を出すか。")
+             tooltip="この値を下回るとチャート上に DROP 警告を表示。\n例: -3.0 = MA25から3%以上下落で警告")
 
-group_vol  = "高ボラ判定（ATR%）"
-atrLen     = input.int(14, "ATR length", minval=1, group=group_vol)
-atrPctThr  = input.float(2.5, "高ボラ閾値 ATR/価格(%) >", step=0.1, group=group_vol)
+group_vol  = "ボラティリティ判定（ATR%）"
+atrLen     = input.int(14, "ATR 期間", minval=1, group=group_vol,
+             tooltip="ATR（平均真の値幅）の計算期間。通常14で十分。")
+atrPctThr  = input.float(2.5, "高ボラ閾値 (%)", step=0.1, group=group_vol,
+             tooltip="ATR ÷ 価格 × 100 がこの値を超えると高ボラ判定。\n値動きが荒い=ギャップリスク大 → エントリー非推奨。\n目安: 日経225先物=2.0〜3.0, 個別株=3.0〜5.0")
 
-group_holiday = "祝日・連休判定"
+group_holiday = "祝日・連休リスク判定"
 enableHoliday  = input.bool(true, "日本祝日カレンダーで判定する", group=group_holiday,
-                 tooltip="翌営業日までの間に祝日があれば注意判定。振替休日にも対応。")
+                 tooltip="翌5暦日以内に祝日があれば注意判定。\n固定祝日・ハッピーマンデー・振替休日に対応。\n連休前のギャップリスクを事前検出します。")
 holidayNeedsHV = input.bool(false, "祝日前も高ボラ時のみ注意にする", group=group_holiday,
-                 tooltip="OFFなら祝日前は常に注意。ONなら祝日前かつ高ボラ時のみ注意。")
+                 tooltip="OFF = 祝日前は常に CAUTION\nON  = 祝日前 かつ 高ボラ時のみ CAUTION\n低ボラ相場ではギャップリスク小と判断する場合にON。")
 
-group_sq = "SQ日判定"
-enableSQ   = input.bool(true, "SQ日を判定する", group=group_sq)
+group_sq = "SQ日判定（先物清算日）"
+enableSQ   = input.bool(true, "SQ日を判定する", group=group_sq,
+             tooltip="SQ = 毎月第2金曜日（先物・オプション清算日）。\nSQ当日・前日は出来高急増で値動きが荒れやすい。")
 sqMode     = input.string("全SQ（毎月）", "SQ判定範囲",
-             options=["全SQ（毎月）", "メジャーSQのみ（3,6,9,12月）"], group=group_sq)
+             options=["全SQ（毎月）", "メジャーSQのみ（3,6,9,12月）"], group=group_sq,
+             tooltip="全SQ = 毎月の第2金曜を検出\nメジャーSQのみ = 3,6,9,12月の第2金曜のみ検出\nメジャーSQは特に値動きが大きくなりやすい。")
 
-group_earn = "決算日判定"
+group_earn = "決算日判定（個別銘柄用）"
 enableEarnings    = input.bool(false, "決算前注意を有効にする", group=group_earn,
-                    tooltip="ONにして決算日を入力すると、決算N日前から注意表示。")
-earningsDaysBefore = input.int(2, "決算何日前から注意", minval=0, maxval=10, group=group_earn)
-earningsDate1 = input.time(timestamp("2000-01-01"), "決算日 1", group=group_earn)
-earningsDate2 = input.time(timestamp("2000-01-01"), "決算日 2", group=group_earn)
-earningsDate3 = input.time(timestamp("2000-01-01"), "決算日 3", group=group_earn)
-earningsDate4 = input.time(timestamp("2000-01-01"), "決算日 4", group=group_earn)
+                    tooltip="ONにして決算日を入力すると、決算N日前から注意表示。\n決算発表前後は急騰・急落リスクが高い。")
+earningsDaysBefore = input.int(2, "決算何日前から注意", minval=0, maxval=10, group=group_earn,
+                     tooltip="決算日の何営業日前から CAUTION を表示するか。\n推奨: 1〜3日前")
+earningsDate1 = input.time(timestamp("2000-01-01"), "決算日 1 (Q1)", group=group_earn,
+                tooltip="第1四半期の決算発表日を入力")
+earningsDate2 = input.time(timestamp("2000-01-01"), "決算日 2 (Q2)", group=group_earn,
+                tooltip="第2四半期の決算発表日を入力")
+earningsDate3 = input.time(timestamp("2000-01-01"), "決算日 3 (Q3)", group=group_earn,
+                tooltip="第3四半期の決算発表日を入力")
+earningsDate4 = input.time(timestamp("2000-01-01"), "決算日 4 (Q4)", group=group_earn,
+                tooltip="第4四半期（本決算）の決算発表日を入力")
 
 group_cool = "シグナル制御"
-cooldownLen = input.int(3, "シグナル冷却期間（バー数）", minval=0, group=group_cool,
-              tooltip="同一シグナルが連続で出るのを防ぐ間隔。0=制限なし。")
+cooldownLen = input.int(3, "冷却期間（バー数）", minval=0, group=group_cool,
+              tooltip="同一シグナルが連続で出るのを防ぐ間隔。\n0 = 制限なし（状態遷移のたびに表示）\n3 = 前回シグナルから3バー以内は抑制")
 
-group_tf   = "判定足の固定（任意）"
-useHTF     = input.bool(false, "日足で判定する（intradayでも日足計算）", group=group_tf)
-htf        = input.timeframe("D", "判定に使う足", group=group_tf)
+group_tf   = "判定足の固定（上位足参照）"
+useHTF     = input.bool(false, "上位足で判定する", group=group_tf,
+             tooltip="ONにすると指定した時間足のデータで条件判定。\n分足チャートでも日足ベースの判定が可能。\nリペイント対策済み（確定足のみ使用）。")
+htf        = input.timeframe("D", "判定に使う足", group=group_tf,
+             tooltip="D=日足, W=週足, 60=1時間足 など")
 
 group_vis  = "表示設定"
-showOKLabel     = input.bool(true, "OK シグナル表示", group=group_vis)
-showHVLabel     = input.bool(true, "高ボラ警告表示", group=group_vis)
-showNegDevLabel = input.bool(true, "急落警告表示", group=group_vis)
-showDash        = input.bool(true, "ダッシュボード表示", group=group_vis)
+showOKLabel     = input.bool(true, "▲ OK シグナル表示", group=group_vis,
+                  tooltip="チャート上に緑の ▲OK マークを表示")
+showHVLabel     = input.bool(true, "▼ 高ボラ警告表示", group=group_vis,
+                  tooltip="チャート上にオレンジの ▼HV マークを表示")
+showNegDevLabel = input.bool(true, "✕ 急落警告表示", group=group_vis,
+                  tooltip="チャート上に赤の ✕DROP マークを表示")
+showDash        = input.bool(true, "ダッシュボード（右上テーブル）", group=group_vis,
+                  tooltip="チャート右上にリアルタイム判定テーブルを表示")
 
 //====================
 // 日本祝日判定関数
@@ -273,52 +297,52 @@ if showND
 //====================
 col_ma25 = color.new(#2196F3, 0)
 col_ma75 = ma75Up ? color.new(#4CAF50, 0) : color.new(#F44336, 0)
-plot(ma25, "MA25", color=col_ma25, linewidth=1)
-plot(ma75, "MA75", color=col_ma75, linewidth=2)
+plot(ma25, "MA25（短期）", color=col_ma25, linewidth=1)
+plot(ma75, "MA75（中期・トレンド）", color=col_ma75, linewidth=2)
 
 // OK候補（遷移初回のみ）
-plotshape(showOKLabel and showOK, title="OK candidate",
+plotshape(showOKLabel and showOK, title="▲ エントリー候補",
           style=shape.triangleup, location=location.belowbar,
           color=color.new(#4CAF50, 20), size=size.small,
           text="OK", textcolor=color.white)
 
 // 高ボラ警告（遷移初回のみ）
-plotshape(showHVLabel and showHV, title="HighVol warning",
+plotshape(showHVLabel and showHV, title="▼ 高ボラ警告",
           style=shape.triangledown, location=location.abovebar,
           color=color.new(#FF9800, 20), size=size.small,
           text="HV", textcolor=color.white)
 
 // 急落警告（遷移初回のみ）
-plotshape(showNegDevLabel and showND, title="Negative Deviation",
+plotshape(showNegDevLabel and showND, title="✕ 急落警告（下方乖離）",
           style=shape.xcross, location=location.abovebar,
           color=color.new(#F44336, 20), size=size.small,
           text="DROP", textcolor=color.white)
 
 // 祝日前注意（遷移初回のみ）
-plotshape(holiday_new, title="Holiday Caution",
+plotshape(holiday_new, title="祝日前注意",
           style=shape.flag, location=location.abovebar,
           color=color.new(#E91E63, 20), size=size.small,
           text="HOLIDAY", textcolor=color.white)
 
 // SQ注意（遷移初回のみ）
-plotshape(sq_new, title="SQ Caution",
+plotshape(sq_new, title="SQ日注意",
           style=shape.diamond, location=location.abovebar,
           color=color.new(#9C27B0, 20), size=size.small,
           text="SQ", textcolor=color.white)
 
 // 決算前注意（遷移初回のみ）
-plotshape(earnings_new, title="Earnings Caution",
+plotshape(earnings_new, title="決算前注意",
           style=shape.flag, location=location.abovebar,
           color=color.new(#FF5722, 20), size=size.small,
           text="EARN", textcolor=color.white)
 
 // 背景色
-bgcolor(tradeOK        ? color.new(#4CAF50, 92) : na, title="OK背景")
-bgcolor(highVol        ? color.new(#FF9800, 90) : na, title="HV背景")
-bgcolor(holidayCaution ? color.new(#E91E63, 88) : na, title="祝日前背景")
-bgcolor(sqCaution      ? color.new(#9C27B0, 90) : na, title="SQ背景")
-bgcolor(earningsCaution? color.new(#FF5722, 88) : na, title="決算前背景")
-bgcolor(negDevAlert    ? color.new(#F44336, 90) : na, title="急落背景")
+bgcolor(tradeOK        ? color.new(#4CAF50, 92) : na, title="背景: TradeOK（緑）")
+bgcolor(highVol        ? color.new(#FF9800, 90) : na, title="背景: 高ボラ（橙）")
+bgcolor(holidayCaution ? color.new(#E91E63, 88) : na, title="背景: 祝日前（桃）")
+bgcolor(sqCaution      ? color.new(#9C27B0, 90) : na, title="背景: SQ日（紫）")
+bgcolor(earningsCaution? color.new(#FF5722, 88) : na, title="背景: 決算前（赤橙）")
+bgcolor(negDevAlert    ? color.new(#F44336, 90) : na, title="背景: 急落警告（赤）")
 
 //====================
 // Dashboard（拡張版・色分け付き）
