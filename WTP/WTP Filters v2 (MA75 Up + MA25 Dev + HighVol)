@@ -329,11 +329,8 @@ var table t = table.new(position.top_right, 2, 13, border_width=1,
 
 if barstate.islast and showDash
     // Row 0: ヘッダー（信号機色）
-    headerBg = signalGo ? color.new(#4CAF50, 20) :
-               signalCaution ? color.new(#FF9800, 20) :
-               color.new(#F44336, 20)
-    headerTxt = signalGo ? "GO" :
-                signalCaution ? "CAUTION" : "STOP"
+    headerBg = signalGo ? color.new(#4CAF50, 20) : signalCaution ? color.new(#FF9800, 20) : color.new(#F44336, 20)
+    headerTxt = signalGo ? "GO" : signalCaution ? "CAUTION" : "STOP"
     table.cell(t, 0, 0, "WTP v2.1", text_color=color.white,
                bgcolor=headerBg, text_size=size.small)
     table.cell(t, 1, 0, headerTxt + " | " + syminfo.ticker, text_color=color.white,
@@ -383,19 +380,14 @@ if barstate.islast and showDash
     table.cell(t, 1, 7, weStr, text_color=color.white, bgcolor=c_we, text_size=size.small)
 
     // Row 8: 祝日前
-    c_hol = holidayCaution ? color.new(#E91E63, 30) :
-            preHoliday ? color.new(#E91E63, 70) :
-            color.new(color.black, 60)
+    c_hol = holidayCaution ? color.new(#E91E63, 30) : preHoliday ? color.new(#E91E63, 70) : color.new(color.black, 60)
     holStr = holidayCaution ? "CAUTION" : (preHoliday ? "検出あり" : "-")
     table.cell(t, 0, 8, "Holiday", text_color=color.white, text_size=size.small)
     table.cell(t, 1, 8, holStr, text_color=color.white, bgcolor=c_hol, text_size=size.small)
 
     // Row 9: SQ
-    c_sq = isSQToday ? color.new(#9C27B0, 20) :
-           isPreSQ ? color.new(#9C27B0, 50) :
-           color.new(color.black, 60)
-    sqStr = isSQToday ? (f_isMajorSQMonth(curMonth) ? "MAJOR SQ" : "SQ DAY") :
-            isPreSQ ? "SQ前日" : "-"
+    c_sq = isSQToday ? color.new(#9C27B0, 20) : isPreSQ ? color.new(#9C27B0, 50) : color.new(color.black, 60)
+    sqStr = isSQToday ? (f_isMajorSQMonth(curMonth) ? "MAJOR SQ" : "SQ DAY") : isPreSQ ? "SQ前日" : "-"
     table.cell(t, 0, 9, "SQ", text_color=color.white, text_size=size.small)
     table.cell(t, 1, 9, sqStr, text_color=color.white, bgcolor=c_sq, text_size=size.small)
 
@@ -411,12 +403,8 @@ if barstate.islast and showDash
     table.cell(t, 1, 11, "", bgcolor=color.new(color.black, 70), text_size=size.tiny)
 
     // Row 12: 総合判定（信号機）
-    c_signal = signalGo ? color.new(#4CAF50, 10) :
-               signalCaution ? color.new(#FF9800, 10) :
-               color.new(#F44336, 10)
-    sigStr = signalGo ? "GO — エントリー可" :
-             signalCaution ? "CAUTION — 注意して判断" :
-             "STOP — 見送り推奨"
+    c_signal = signalGo ? color.new(#4CAF50, 10) : signalCaution ? color.new(#FF9800, 10) : color.new(#F44336, 10)
+    sigStr = signalGo ? "GO — エントリー可" : signalCaution ? "CAUTION — 注意して判断" : "STOP — 見送り推奨"
     table.cell(t, 0, 12, "Signal", text_color=color.white, text_size=size.small,
                bgcolor=c_signal)
     table.cell(t, 1, 12, sigStr, text_color=color.white, text_size=size.small,
