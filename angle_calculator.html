@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>迎角計算アプリ</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: #f5f7fb;
+        color: #1d2433;
+      }
+
+      main {
+        max-width: 760px;
+        margin: 48px auto;
+        background: #fff;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 14px 34px rgba(33, 40, 52, 0.12);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 1.7rem;
+      }
+
+      p {
+        line-height: 1.6;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      label {
+        font-weight: 600;
+      }
+
+      input {
+        margin-top: 8px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #cad3e4;
+        font-size: 1rem;
+      }
+
+      button {
+        margin-top: 8px;
+        padding: 12px 16px;
+        border: none;
+        border-radius: 8px;
+        background: #1f66e5;
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #1657ca;
+      }
+
+      .result {
+        margin-top: 28px;
+        background: #eef4ff;
+        border-radius: 12px;
+        padding: 18px;
+      }
+
+      .result dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 10px 12px;
+      }
+
+      .result dt {
+        font-weight: 700;
+      }
+
+      .formula {
+        margin-top: 16px;
+        background: #fff;
+        border: 1px solid #cad3e4;
+        border-radius: 8px;
+        padding: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+      }
+
+      .error {
+        margin-top: 14px;
+        color: #b42318;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>迎角（ピッチ角）計算アプリ</h1>
+      <p>
+        水平距離と垂直距離から迎角を計算します。<br />
+        垂直距離がマイナスの場合は、迎角もマイナスになります。
+      </p>
+
+      <section class="grid">
+        <label for="horizontal">
+          水平距離
+          <input id="horizontal" type="number" step="any" placeholder="例: 150" />
+        </label>
+
+        <label for="vertical">
+          垂直距離
+          <input id="vertical" type="number" step="any" placeholder="例: -20" />
+        </label>
+
+        <button id="calcBtn" type="button">迎角を計算</button>
+      </section>
+
+      <p id="error" class="error" role="alert"></p>
+
+      <section class="result" aria-live="polite">
+        <dl>
+          <dt>度数法（°）</dt>
+          <dd id="degreeOut">-</dd>
+          <dt>ラジアン（rad）</dt>
+          <dd id="radianOut">-</dd>
+        </dl>
+        <div id="formulaOut" class="formula">計算過程はここに表示されます。</div>
+      </section>
+    </main>
+
+    <script>
+      const horizontalInput = document.getElementById("horizontal");
+      const verticalInput = document.getElementById("vertical");
+      const calcBtn = document.getElementById("calcBtn");
+      const degreeOut = document.getElementById("degreeOut");
+      const radianOut = document.getElementById("radianOut");
+      const formulaOut = document.getElementById("formulaOut");
+      const errorOut = document.getElementById("error");
+
+      function format(value) {
+        return Number.isFinite(value) ? value.toFixed(6) : "-";
+      }
+
+      function calculateAngle() {
+        const horizontal = Number(horizontalInput.value);
+        const vertical = Number(verticalInput.value);
+
+        errorOut.textContent = "";
+
+        if (!Number.isFinite(horizontal) || !Number.isFinite(vertical)) {
+          errorOut.textContent = "水平距離と垂直距離を数値で入力してください。";
+          return;
+        }
+
+        if (horizontal === 0) {
+          errorOut.textContent = "水平距離が 0 の場合は角度を定義できません。0 以外を入力してください。";
+          return;
+        }
+
+        const thetaRad = Math.atan2(vertical, horizontal);
+        const thetaDeg = thetaRad * (180 / Math.PI);
+
+        degreeOut.textContent = `${format(thetaDeg)} °`;
+        radianOut.textContent = `${format(thetaRad)} rad`;
+
+        formulaOut.textContent = [
+          "式k:",
+          `1) θ = arctan(垂直距離 / 水平距離)`,
+          `   θ = arctan(${vertical} / ${horizontal})`,
+          `2) θ(rad) = atan2(${vertical}, ${horizontal}) = ${format(thetaRad)}`,
+          `3) θ(°) = θ(rad) × 180 / π`,
+          `   θ(°) = ${format(thetaRad)} × 180 / π = ${format(thetaDeg)}`,
+        ].join("\n");
+      }
+
+      calcBtn.addEventListener("click", calculateAngle);
+      horizontalInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") calculateAngle();
+      });
+      verticalInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") calculateAngle();
+      });
+    </script>
+  </body>
+</html>
