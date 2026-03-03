@@ -135,6 +135,10 @@
           <dd id="degreeOut">-</dd>
           <dt>ラジアン（rad）</dt>
           <dd id="radianOut">-</dd>
+          <dt>勾配比（1:n）</dt>
+          <dd id="ratioOut">-</dd>
+          <dt>勾配（%）</dt>
+          <dd id="percentOut">-</dd>
         </dl>
         <div id="formulaOut" class="formula">計算過程はここに表示されます。</div>
       </section>
@@ -146,6 +150,8 @@
       const calcBtn = document.getElementById("calcBtn");
       const degreeOut = document.getElementById("degreeOut");
       const radianOut = document.getElementById("radianOut");
+      const ratioOut = document.getElementById("ratioOut");
+      const percentOut = document.getElementById("percentOut");
       const formulaOut = document.getElementById("formulaOut");
       const errorOut = document.getElementById("error");
 
@@ -165,15 +171,25 @@
         }
 
         if (horizontal === 0) {
-          errorOut.textContent = "水平距離が 0 の場合は角度を定義できません。0 以外を入力してください。";
+          errorOut.textContent = "水平距離が 0 の場合は角度と勾配を定義できません。0 以外を入力してください。";
           return;
         }
 
         const thetaRad = Math.atan2(vertical, horizontal);
         const thetaDeg = thetaRad * (180 / Math.PI);
+        const slopePercent = (vertical / horizontal) * 100;
+        const ratioN = Math.abs(horizontal / vertical);
 
         degreeOut.textContent = `${format(thetaDeg)} °`;
         radianOut.textContent = `${format(thetaRad)} rad`;
+        percentOut.textContent = `${format(slopePercent)} %`;
+
+        if (vertical === 0) {
+          ratioOut.textContent = "0勾配（水平）";
+        } else {
+          const direction = vertical < 0 ? "（下り）" : "（上り）";
+          ratioOut.textContent = `1 : ${format(ratioN)} ${direction}`;
+        }
 
         formulaOut.textContent = [
           "式k:",
@@ -182,6 +198,12 @@
           `2) θ(rad) = atan2(${vertical}, ${horizontal}) = ${format(thetaRad)}`,
           `3) θ(°) = θ(rad) × 180 / π`,
           `   θ(°) = ${format(thetaRad)} × 180 / π = ${format(thetaDeg)}`,
+          `4) 勾配比（1:n）: n = |水平距離 / 垂直距離|`,
+          vertical === 0
+            ? "   垂直距離 = 0 のため、勾配比は 0勾配（水平）"
+            : `   n = |${horizontal} / ${vertical}| = ${format(ratioN)} → 1:${format(ratioN)}`,
+          `5) 勾配（%） = (垂直距離 / 水平距離) × 100`,
+          `   = (${vertical} / ${horizontal}) × 100 = ${format(slopePercent)}%`,
         ].join("\n");
       }
 
