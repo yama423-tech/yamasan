@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>4型治山ダム 安定計算WEB</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>4型治山ダム 安定計算（WEB）</h1>
+    <p class="lead">背面土圧・水圧を <strong>1/2 h</strong> とした安定計算を、入力値から自動算出します。</p>
+
+    <section class="card grid2">
+      <div>
+        <h2>1) 寸法入力</h2>
+        <div class="fields" id="dim-fields"></div>
+      </div>
+      <div>
+        <h2>2) 設計条件</h2>
+        <div class="fields" id="cond-fields"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3) 荷重・モーメント（ブロック重量ベース）</h2>
+      <table id="force-table">
+        <thead>
+          <tr><th>区分</th><th>式</th><th>荷重 kN</th><th>アーム m</th><th>モーメント kN・m</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>4) 合力・偏心・応力・安定判定</h2>
+      <div class="result-grid" id="results"></div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
