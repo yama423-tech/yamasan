@@ -62,7 +62,8 @@ function pushKpi(root, title, value, cls = "") {
 }
 
 function calculateEarthPressure(input) {
-  const alpha = input.m === 0 ? 90 : deg(Math.atan(1 / Math.abs(input.m)));
+  const alpha = deg(Math.atan(Math.abs(input.m))); // 壁面傾斜角 α
+  const alpha0 = 90 - alpha; // α0 = 90 - α
   const delta = (2 / 3) * input.phi;
   const a1 = deg(Math.atan(1 / Math.max(input.Ts, 1e-9)));
 
@@ -73,15 +74,15 @@ function calculateEarthPressure(input) {
 
   const K = Math.sqrt(
     Math.max(
-      (Math.sin(rad(alpha - delta)) * Math.sin(rad(input.phi - input.beta))) /
-      Math.max(Math.sin(rad(input.phi + delta)) * Math.sin(rad(alpha + input.beta)), 1e-9),
+      (Math.sin(rad(alpha0 - delta)) * Math.sin(rad(input.phi - input.beta))) /
+      Math.max(Math.sin(rad(input.phi + delta)) * Math.sin(rad(alpha0 + input.beta)), 1e-9),
       0
     )
   );
 
   const theta = deg(Math.atan(
-    (Math.sin(rad(input.phi)) + K * Math.sin(rad(alpha))) /
-    Math.max(Math.cos(rad(input.phi)) - K * Math.cos(rad(alpha)), 1e-9)
+    (Math.sin(rad(input.phi)) + K * Math.sin(rad(alpha0))) /
+    Math.max(Math.cos(rad(input.phi)) - K * Math.cos(rad(alpha0)), 1e-9)
   ));
 
   const c = (
@@ -101,7 +102,7 @@ function calculateEarthPressure(input) {
 
   if (a0 <= theta) {
     const E = 0.5 * input.s * input.h * input.h * c;
-    return { alpha, delta, a1, L, a0, theta, c, E, mode: "coulomb", rows: [], maxRow: null };
+    return { alpha, alpha0, delta, a1, L, a0, theta, c, E, mode: "coulomb", rows: [], maxRow: null };
   }
 
   const start = theta;
@@ -132,7 +133,7 @@ function calculateEarthPressure(input) {
       (S1 * Math.cos(rad(tx - input.phi)) + S2 * Math.cos(rad(a1 - input.phi))) /
       Math.max(S1 * Math.sin(rad(tx - input.phi)) + S2 * Math.sin(rad(a1 - input.phi)), 1e-9)
     ));
-    const a3 = 90 + delta - alpha;
+    const a3 = 90 + delta - alpha0;
 
     const E = (S1 + S2) / Math.max((Math.tan(rad(a2)) + Math.tan(rad(a3))) * Math.cos(rad(a3)), 1e-9);
 
@@ -143,6 +144,7 @@ function calculateEarthPressure(input) {
 
   return {
     alpha,
+    alpha0,
     delta,
     a1,
     L,
@@ -260,11 +262,12 @@ function calculate() {
   logRoot.textContent = [
     "【土圧計算過程】",
     `a1 = tan^-1(1/Ts) = ${fmt(earth.a1, 3)}°`,
-    `α = tan^-1(1/|m|) = ${fmt(earth.alpha, 3)}°`,
+    `α = tan^-1(m) = ${fmt(earth.alpha, 3)}°`,
+    `α0 = 90 - α = ${fmt(earth.alpha0, 3)}°`,
     `δ = 2/3 φ = ${fmt(earth.delta, 3)}°`,
     `L = ((Tb + m·h)tanβ + h)/(tan a1 - tanβ) = ${fmt(earth.L)} m`,
     `a0 = tan^-1((L tan a1)/(L+Tb)) = ${fmt(earth.a0, 3)}°`,
-    `θ = tan^-1((sinφ + K sinα)/(cosφ - K cosα)) = ${fmt(earth.theta, 3)}°`,
+    `θ = tan^-1((sinφ + K sinα0)/(cosφ - K cosα0)) = ${fmt(earth.theta, 3)}°`,
     earth.mode === "trial" ? "判定: a0 > θ なので試行クサビ法でEmaxを採用" : "判定: a0 ≤ θ なのでクーロン式で算定",
     maxInfo,
     `Ev = E·sin(δ+α) = ${fmt(Ev)} kN`,
