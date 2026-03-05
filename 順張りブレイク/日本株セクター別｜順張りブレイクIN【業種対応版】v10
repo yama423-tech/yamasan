@@ -7,15 +7,7 @@ f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
 
 // ===== 1. 業種・セクター選択 =====
 group_sec = "セクター選択"
-sectorInput = input.string("Manual (手動設定)", "ターゲット業種", options=[
-  "Manual (手動設定)", 
-  "Mega Bank (メガバンク)", "Regional Bank (地銀)", 
-  "Semicon (半導体)", "High Tech (ハイテク)", 
-  "Marine (海運)", "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", 
-  "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)", "Real Estate (不動産)", 
-  "Construction (建設)", "Transportation (運輸)", "Consumer (生活用品)", 
-  "Consulting (コンサル)", "Resources (金/銀/資源)", 
-  "Index N225 (日経平均)", "Index NASDAQ", "ETH/JPY (イーサリアム)"], group=group_sec)
+sectorInput = input.string("Manual (手動設定)", "ターゲット業種", options=["Manual (手動設定)", "Mega Bank (メガバンク)", "Regional Bank (地銀)", "Semicon (半導体)", "High Tech (ハイテク)", "Marine (海運)", "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)", "Real Estate (不動産)", "Construction (建設)", "Transportation (運輸)", "Consumer (生活用品)", "Consulting (コンサル)", "Resources (金/銀/資源)", "Index N225 (日経平均)", "Index NASDAQ", "ETH/JPY (イーサリアム)"], group=group_sec)
 
 // 手動設定用パラメータ（Manual選択時のみ有効）
 group_man = "手動設定パラメータ (Manual選択時)"
