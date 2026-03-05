@@ -3,9 +3,9 @@ const geom = {
   b: [0.3, "天端厚 b (m)"],
   n: [0.30, "表のり n"],
   m: [0.20, "山側法 1:m（逆のりは負値）"],
-  Tb: [0.30, "床掘余幅 Tb (m)"],
+  Tb: [0.40, "床掘余幅 Tb (m)"],
   Ts: [0.60, "床掘法 Ts"],
-  beta: [30.0, "地表面傾斜 β (°)"],
+  beta: [35.0, "地表面傾斜 β (°)"],
 };
 
 const cond = {
@@ -119,7 +119,7 @@ function calculateEarthPressure(input) {
     if (input.m >= 0) {
       h1 = input.h * (1 + input.m * Math.tan(rad(tx)));
       h2 = input.h + (l + input.Tb + input.m * input.h) * Math.tan(rad(input.beta)) - l * Math.tan(rad(a1));
-      S1 = ((h1 + h2) * (l + input.Tb) + h1 * input.m * input.h) * input.s * 0.5;
+      S1 = ((h1 + h2) * (l + input.Tb) + h2 * input.m * input.h) * input.s * 0.5;
       S2 = h2 * Math.max(L - l, 0) * input.s * 0.5;
     } else {
       const l2 = -input.m * input.h - (l + input.Tb);
