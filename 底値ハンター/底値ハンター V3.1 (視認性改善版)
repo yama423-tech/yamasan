@@ -1,22 +1,30 @@
 //@version=5
-indicator("底値ハンター V3.1 (視認性改善版)", overlay=true, shorttitle="底値ハンターV3.1")
+indicator("底値ハンター V3.2 (精度改善版)", overlay=true, shorttitle="底値ハンターV3.2")
 
 // ==========================================
 // 1. 設定
 // ==========================================
 // 感度設定
-lookback     = input.int(5, "ダイバージェンス判定期間(本)", minval=1)
-rsiLen       = input.int(14, "RSI期間")
-rsiOversold  = input.int(30, "RSI売られすぎライン")
+grpSignal = "シグナル感度"
+lookback      = input.int(5, "ダイバージェンス判定期間(本)", minval=1, group=grpSignal)
+rsiLen        = input.int(14, "RSI期間", group=grpSignal)
+rsiOversold   = input.int(30, "RSI売られすぎライン", group=grpSignal)
+minRsiLift    = input.float(2.0, "ダイバージェンス時のRSI改善幅(最小)", minval=0.0, step=0.5, group=grpSignal)
+cooldownBars  = input.int(3, "シグナル間隔(バー)", minval=0, group=grpSignal)
+requireBull   = input.bool(true, "陽線確定を必須にする", group=grpSignal)
 
 // ボリンジャーバンド
-bbLen        = input.int(20, "ボリンジャーバンド期間")
-bbMult       = input.float(2.0, "バンド偏差(σ)")
+grpBB = "ボラティリティ"
+bbLen         = input.int(20, "ボリンジャーバンド期間", group=grpBB)
+bbMult        = input.float(2.0, "バンド偏差(σ)", group=grpBB)
+useVolatilityFilter = input.bool(true, "低ボラ相場フィルターを使う", group=grpBB)
+minBbWidthPct = input.float(1.2, "最低BB幅(%)", minval=0.1, step=0.1, group=grpBB)
 
 // フィルター
-useVol       = input.bool(true, "出来高(セリングクライマックス)判定を使う")
-volMult      = input.float(2.0, "平均出来高の何倍でパニックとみなすか")
-useTrendFilter = input.bool(false, "200EMAより下落中のみ有効にする(逆張り専用化)")
+grpFilter = "環境フィルター"
+useVol        = input.bool(true, "出来高(セリングクライマックス)判定を使う", group=grpFilter)
+volMult       = input.float(2.0, "平均出来高の何倍でパニックとみなすか", minval=0.1, step=0.1, group=grpFilter)
+trendMode     = input.string("無効", "トレンド条件", options=["無効", "逆張り(EMA200下)", "順張り(EMA200上)"], group=grpFilter)
 
 // ==========================================
 // 2. 計算ロジック
@@ -32,22 +40,28 @@ volMa   = ta.sma(volume, 20)
 isPanicVol = useVol ? (volume > volMa * volMult) : true
 
 // トレンドフィルター
-trendOk = useTrendFilter ? (close < ema200) : true
+trendOk = trendMode == "逆張り(EMA200下)" ? close < ema200 : trendMode == "順張り(EMA200上)" ? close > ema200 : true
+
+// ボラティリティフィルター
+bbWidthPct = mid != 0.0 ? (upper - lower) / mid * 100.0 : 0.0
+volatilityOk = useVolatilityFilter ? bbWidthPct >= minBbWidthPct : true
+
+// ローソク足確認
+bullOk = requireBull ? close > open : true
 
 // ==========================================
 // 3. 特殊な底打ちパターン検知
 // ==========================================
 
 // A. RSIダイバージェンス
-lowLowest = ta.lowest(low, lookback)
-rsiLowest = ta.lowest(rsi, lookback)
 wasOversold = ta.lowest(rsi, 10) < rsiOversold
-isDiv = (low < low[lookback]) and (rsi > rsi[lookback]) and wasOversold
+isDivRaw = (low < low[lookback]) and (rsi > rsi[lookback]) and wasOversold
+isDiv = isDivRaw and (rsi - rsi[lookback] >= minRsiLift)
 
 // B. セリングクライマックス
 float body = math.abs(close - open)
 float wick = math.min(close, open) - low
-bool isPinbar = wick > body * 1.5 
+bool isPinbar = wick > body * 1.5
 bool isCrash  = (low < lower) and isPanicVol and isPinbar
 
 // ==========================================
@@ -56,23 +70,28 @@ bool isCrash  = (low < lower) and isPanicVol and isPinbar
 cross5EMA = ta.crossover(close, ema5)
 
 // パターン1: ダイバージェンス
-buyDiv = isDiv and cross5EMA and trendOk
+buyDiv = isDiv and cross5EMA and trendOk and volatilityOk and bullOk
 
 // パターン2: クラッシュ(セリングクライマックス)
-buyCrash = isCrash and close > open 
+buyCrash = isCrash and trendOk and volatilityOk and bullOk
 
 // パターン3: 安全圏回復 (V2ロジック)
-buyRecovery = wasOversold and cross5EMA and rsi > rsiOversold and trendOk
+buyRecovery = wasOversold and cross5EMA and rsi > rsiOversold and trendOk and volatilityOk and bullOk
 
 // 統合シグナル
 var int lastBuy = 0
-bool signal = (buyDiv or buyCrash or buyRecovery) and (bar_index - lastBuy > 3)
+rawSignal = buyDiv or buyCrash or buyRecovery
+signal = rawSignal and (bar_index - lastBuy > cooldownBars)
 
 if signal
     lastBuy := bar_index
 
+// シグナル強度 (目安)
+signalScore = (buyDiv ? 2 : 0) + (buyCrash ? 2 : 0) + (buyRecovery ? 1 : 0) + (isPanicVol ? 1 : 0) + (wasOversold ? 1 : 0)
+strongSignal = signal and signalScore >= 4
+
 // ==========================================
-// 5. 描画 (視認性を変更)
+// 5. 描画
 // ==========================================
 
 // バンド描画
@@ -81,20 +100,14 @@ p2 = plot(lower, "Lower", color=color.new(color.blue, 90))
 fill(p1, p2, color=color.new(color.gray, 95))
 plot(mid, "20 SMA", color=color.orange, linewidth=1)
 plot(ema5, "5 EMA", color=color.aqua, linewidth=2)
+plot(ema200, "200 EMA", color=color.new(color.yellow, 40), linewidth=1)
 
-// --- シグナル描画の変更点 ---
-
-// 1. パニック買い (旧:水色ひし形 -> 新:紫ラベル)
-// 明確な「底」として目立たせます
-plotshape(buyCrash, title="Panic Buy", location=location.belowbar, color=color.purple, style=shape.labelup, size=size.normal, text="BOTTOM", textcolor=color.white)
-
-// 2. ダイバージェンス買い (変更なし:オレンジラベル)
-// 一番信頼できるサイン
-plotshape(buyDiv and not buyCrash, title="Div Buy", location=location.belowbar, color=color.orange, style=shape.labelup, size=size.normal, text="Div\nBUY", textcolor=color.white)
-
-// 3. 安全圏回復 (旧:緑三角 -> 新:白丸)
-// Pullback Buyの「緑三角」と被らないように白丸に変更
-plotshape(buyRecovery and not buyDiv and not buyCrash, title="Recovery Buy", location=location.belowbar, color=color.white, style=shape.circle, size=size.small, text="", textcolor=color.black)
+// シグナル描画
+plotshape(signal and buyCrash, title="Panic Buy", location=location.belowbar, color=color.purple, style=shape.labelup, size=size.normal, text="BOTTOM", textcolor=color.white)
+plotshape(signal and buyDiv and not buyCrash, title="Div Buy", location=location.belowbar, color=color.orange, style=shape.labelup, size=size.normal, text="Div\nBUY", textcolor=color.white)
+plotshape(signal and buyRecovery and not buyDiv and not buyCrash, title="Recovery Buy", location=location.belowbar, color=color.white, style=shape.circle, size=size.small, text="", textcolor=color.black)
+plotshape(strongSignal, title="Strong Signal", location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.tiny, text="A+", textcolor=color.black)
 
 // アラート
 alertcondition(signal, "底値ハンター・エントリー", "底打ちからの反転シグナル点灯！")
+alertcondition(strongSignal, "底値ハンター・強シグナル", "複数条件一致の強い反転シグナルです。")
