@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>土留工 安定計算WEB</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>土留工 安定計算（GW-C参考）</h1>
+    <p class="lead">試行クサビ法で土圧を算出し、転倒・滑動・地耐力・内部応力を自動判定します。</p>
+
+    <section class="card grid2">
+      <div>
+        <h2>1) 寸法・形状</h2>
+        <div id="geom-fields" class="fields"></div>
+      </div>
+      <div>
+        <h2>2) 設計条件</h2>
+        <div id="cond-fields" class="fields"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <button id="calc-btn" class="calc-btn">計算開始</button>
+      <span class="sub">※ 入力後にこのボタンを押して再計算します。</span>
+    </section>
+
+    <section class="card">
+      <h2>3) 土圧計算（試行クサビ法）</h2>
+      <div id="earth-kpis" class="result-grid"></div>
+      <table id="wedge-table">
+        <thead>
+          <tr>
+            <th>θx (°)</th><th>S1 (kN/m)</th><th>S2 (kN/m)</th><th>a2 (°)</th><th>a3 (°)</th><th>E (kN/m)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>4) 荷重・モーメント計算表</h2>
+      <table id="force-table">
+        <thead>
+          <tr><th>区分</th><th>式</th><th>荷重 (kN)</th><th>アーム (m)</th><th>モーメント (kN・m)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>5) 合力位置・地盤反力・安定判定</h2>
+      <div id="result-kpis" class="result-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>6) 計算過程</h2>
+      <pre id="calc-log" class="log"></pre>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
