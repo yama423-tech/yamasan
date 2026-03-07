@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web FFT アナライザー</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 24px 16px;
+        }
+
+        .container {
+            max-width: 860px;
+            margin: auto;
+        }
+
+        header {
+            margin-bottom: 28px;
+        }
+
+        header h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.02em;
+        }
+
+        header p {
+            margin-top: 6px;
+            font-size: 0.875rem;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        /* ─── カード ─── */
+        .card {
+            background: #1a1d27;
+            border: 1px solid #2a2d3d;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #5a6aff;
+            margin-bottom: 14px;
+        }
+
+        /* ─── プリセット ─── */
+        .presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .preset-btn {
+            padding: 5px 14px;
+            font-size: 0.8rem;
+            border: 1px solid #3a3d55;
+            border-radius: 20px;
+            background: transparent;
+            color: #aaa;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .preset-btn:hover {
+            border-color: #5a6aff;
+            color: #fff;
+            background: rgba(90,106,255,0.1);
+        }
+
+        /* ─── テキストエリア ─── */
+        textarea {
+            width: 100%;
+            height: 80px;
+            background: #0f1117;
+            border: 1px solid #2a2d3d;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            padding: 10px 12px;
+            resize: vertical;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus {
+            border-color: #5a6aff;
+        }
+
+        /* ─── オプション行 ─── */
+        .options-row {
+            display: flex;
+            gap: 16px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .option-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .option-group label {
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        select, input[type="number"] {
+            background: #0f1117;
+            border: 1px solid #2a2d3d;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 0.85rem;
+            padding: 6px 10px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        select:focus, input[type="number"]:focus {
+            border-color: #5a6aff;
+        }
+
+        .run-btn {
+            margin-left: auto;
+            padding: 8px 28px;
+            background: #5a6aff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+        }
+
+        .run-btn:hover  { background: #6e7dff; }
+        .run-btn:active { transform: scale(0.97); }
+
+        /* ─── エラーメッセージ ─── */
+        .error-msg {
+            display: none;
+            color: #ff6b6b;
+            font-size: 0.8rem;
+            margin-top: 8px;
+        }
+
+        /* ─── Canvas チャート ─── */
+        #chartCanvas {
+            width: 100%;
+            border-radius: 8px;
+            display: block;
+            cursor: crosshair;
+        }
+
+        /* ─── 統計テーブル ─── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .stat-box {
+            background: #0f1117;
+            border: 1px solid #2a2d3d;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+
+        .stat-label {
+            font-size: 0.72rem;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ─── ピーク一覧 ─── */
+        .peak-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .peak-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            padding: 6px 10px;
+            background: #0f1117;
+            border-radius: 6px;
+            border-left: 3px solid;
+        }
+
+        .peak-item .freq { color: #aaa; }
+        .peak-item .amp  { font-weight: 600; color: #fff; }
+
+        /* ─── ツールチップ ─── */
+        #tooltip {
+            position: fixed;
+            background: rgba(15,17,23,0.92);
+            border: 1px solid #3a3d55;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            color: #e0e0e0;
+            pointer-events: none;
+            display: none;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>Web FFT アナライザー</h1>
+        <p>時系列信号データをカンマ区切りで入力し、振幅スペクトルを可視化します。<br>
+           データ数が 2 の累乗でない場合は自動でゼロ詰め（ゼロパディング）されます。</p>
+    </header>
+
+    <!-- 入力カード -->
+    <div class="card">
+        <div class="card-title">入力データ</div>
+
+        <div class="presets">
+            <button class="preset-btn" onclick="loadPreset('sine')">正弦波 1 Hz</button>
+            <button class="preset-btn" onclick="loadPreset('multi')">多周波数合成</button>
+            <button class="preset-btn" onclick="loadPreset('square')">矩形波</button>
+            <button class="preset-btn" onclick="loadPreset('noise')">ホワイトノイズ</button>
+            <button class="preset-btn" onclick="loadPreset('chirp')">チャープ信号</button>
+        </div>
+
+        <textarea id="inputData" placeholder="例: 1, 0.707, 0, -0.707, -1, -0.707, 0, 0.707">1, 0.707, 0, -0.707, -1, -0.707, 0, 0.707</textarea>
+        <div class="error-msg" id="errorMsg"></div>
+
+        <div class="options-row">
+            <div class="option-group">
+                <label>窓関数</label>
+                <select id="windowFunc">
+                    <option value="rect">矩形（なし）</option>
+                    <option value="hann" selected>ハニング</option>
+                    <option value="hamming">ハミング</option>
+                    <option value="blackman">ブラックマン</option>
+                </select>
+            </div>
+            <div class="option-group">
+                <label>サンプリング周波数 (Hz)</label>
+                <input type="number" id="sampleRate" value="8" min="1" max="192000" step="1">
+            </div>
+            <div class="option-group">
+                <label>スケール</label>
+                <select id="scaleType">
+                    <option value="linear">リニア</option>
+                    <option value="db">dB（対数）</option>
+                </select>
+            </div>
+            <button class="run-btn" onclick="runFFT()">解析実行</button>
+        </div>
+    </div>
+
+    <!-- チャートカード -->
+    <div class="card">
+        <div class="card-title">振幅スペクトル</div>
+        <canvas id="chartCanvas" height="240"></canvas>
+    </div>
+
+    <!-- 統計カード -->
+    <div class="card" id="statsCard" style="display:none">
+        <div class="card-title">解析サマリー</div>
+        <div class="stats-grid" id="statsGrid"></div>
+    </div>
+
+    <!-- ピーク一覧カード -->
+    <div class="card" id="peaksCard" style="display:none">
+        <div class="card-title">検出ピーク（上位 5 成分）</div>
+        <div class="peak-list" id="peakList"></div>
+    </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+/* =========================================================
+   FFT（クーリー–テューキー 再帰版）
+   ========================================================= */
+function fft(real, imag) {
+    const n = real.length;
+    if (n <= 1) return { real, imag };
+
+    const eR = [], eI = [], oR = [], oI = [];
+    for (let i = 0; i < n / 2; i++) {
+        eR.push(real[i * 2]);     eI.push(imag[i * 2]);
+        oR.push(real[i * 2 + 1]); oI.push(imag[i * 2 + 1]);
+    }
+
+    const even = fft(eR, eI);
+    const odd  = fft(oR, oI);
+
+    const rR = new Array(n), rI = new Array(n);
+    for (let k = 0; k < n / 2; k++) {
+        const angle = -2 * Math.PI * k / n;
+        const wR = Math.cos(angle), wI = Math.sin(angle);
+        const tR = wR * odd.real[k] - wI * odd.imag[k];
+        const tI = wR * odd.imag[k] + wI * odd.real[k];
+
+        rR[k]         = even.real[k] + tR;
+        rI[k]         = even.imag[k] + tI;
+        rR[k + n / 2] = even.real[k] - tR;
+        rI[k + n / 2] = even.imag[k] - tI;
+    }
+    return { real: rR, imag: rI };
+}
+
+/* =========================================================
+   窓関数
+   ========================================================= */
+function applyWindow(data, type) {
+    const n = data.length;
+    return data.map((v, i) => {
+        switch (type) {
+            case 'hann':     return v * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+            case 'hamming':  return v * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (n - 1)));
+            case 'blackman': return v * (0.42 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))
+                                             + 0.08 * Math.cos(4 * Math.PI * i / (n - 1)));
+            default:         return v; // rect
+        }
+    });
+}
+
+/* =========================================================
+   プリセット信号生成
+   ========================================================= */
+const PRESETS = {
+    sine:   () => Array.from({length: 64}, (_, i) => Math.sin(2 * Math.PI * i / 64)),
+    multi:  () => Array.from({length: 64}, (_, i) =>
+                    Math.sin(2 * Math.PI * 3 * i / 64) +
+                    0.5 * Math.sin(2 * Math.PI * 7 * i / 64) +
+                    0.25 * Math.sin(2 * Math.PI * 15 * i / 64)),
+    square: () => Array.from({length: 64}, (_, i) => (i % 16 < 8 ? 1 : -1)),
+    noise:  () => Array.from({length: 64}, () => Math.random() * 2 - 1),
+    chirp:  () => Array.from({length: 64}, (_, i) => Math.sin(2 * Math.PI * (0.5 + i * 0.2) * i / 64)),
+};
+
+function loadPreset(name) {
+    const data = PRESETS[name]();
+    document.getElementById('inputData').value = data.map(v => v.toFixed(4)).join(', ');
+}
+
+/* =========================================================
+   メイン解析
+   ========================================================= */
+let lastMagnitudes = [];
+let lastFreqs = [];
+
+function runFFT() {
+    const errorEl = document.getElementById('errorMsg');
+    errorEl.style.display = 'none';
+
+    const inputStr = document.getElementById('inputData').value;
+    let data = inputStr.split(',').map(x => parseFloat(x.trim())).filter(x => !isNaN(x));
+
+    if (data.length < 2) {
+        showError('データが少なすぎます。2 点以上入力してください。');
+        return;
+    }
+
+    const sampleRate = parseFloat(document.getElementById('sampleRate').value) || 8;
+    const windowType = document.getElementById('windowFunc').value;
+    const scaleType  = document.getElementById('scaleType').value;
+
+    // 窓関数適用前のデータ点数を記録
+    const rawN = data.length;
+
+    // ゼロパディング
+    let n = Math.pow(2, Math.ceil(Math.log2(rawN)));
+    if (n < 2) n = 2;
+    while (data.length < n) data.push(0);
+
+    // 窓関数（ゼロパディング前の有効部分のみ）
+    const windowed = applyWindow(data.slice(0, rawN), windowType).concat(data.slice(rawN));
+
+    const result = fft(windowed, new Array(n).fill(0));
+
+    // 振幅計算（片側スペクトル）
+    const halfN = n / 2;
+    const mags = [], freqs = [];
+    for (let i = 0; i <= halfN; i++) {
+        const mag = Math.sqrt(result.real[i] ** 2 + result.imag[i] ** 2) / n;
+        mags.push(i === 0 || i === halfN ? mag : mag * 2); // 片側補正
+        freqs.push((i * sampleRate) / n);
+    }
+
+    // dB 変換
+    let displayMags = mags;
+    if (scaleType === 'db') {
+        const ref = Math.max(...mags) || 1e-10;
+        displayMags = mags.map(m => 20 * Math.log10(Math.max(m, 1e-10) / ref));
+    }
+
+    lastMagnitudes = displayMags;
+    lastFreqs = freqs;
+
+    drawChart(displayMags, freqs, scaleType);
+    updateStats(mags, freqs, rawN, n, sampleRate);
+    showPeaks(mags, freqs);
+}
+
+/* =========================================================
+   Canvas チャート描画
+   ========================================================= */
+function drawChart(mags, freqs, scaleType) {
+    const canvas = document.getElementById('chartCanvas');
+    const dpr = window.devicePixelRatio || 1;
+
+    const cssW = canvas.parentElement.clientWidth;
+    const cssH = 240;
+    canvas.width  = cssW * dpr;
+    canvas.height = cssH * dpr;
+    canvas.style.width  = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const PAD = { top: 16, right: 16, bottom: 48, left: 56 };
+    const W = cssW - PAD.left - PAD.right;
+    const H = cssH - PAD.top  - PAD.bottom;
+
+    // 背景
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    // データ範囲
+    let minVal = scaleType === 'db' ? Math.min(...mags) : 0;
+    let maxVal = Math.max(...mags);
+    if (maxVal === minVal) maxVal = minVal + 1;
+    const range = maxVal - minVal;
+
+    // グリッド線
+    ctx.strokeStyle = '#1e2135';
+    ctx.lineWidth = 1;
+    const gridLines = 5;
+    for (let g = 0; g <= gridLines; g++) {
+        const y = PAD.top + H - (g / gridLines) * H;
+        ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + W, y); ctx.stroke();
+
+        // Y 軸ラベル
+        const val = minVal + (g / gridLines) * range;
+        ctx.fillStyle = '#555';
+        ctx.font = '11px system-ui';
+        ctx.textAlign = 'right';
+        ctx.fillText(scaleType === 'db' ? val.toFixed(1) : val.toFixed(3), PAD.left - 6, y + 4);
+    }
+
+    // バー描画
+    const barCount = mags.length;
+    const barW = Math.max(1, W / barCount - 1);
+
+    const gradient = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + H);
+    gradient.addColorStop(0, '#7c8fff');
+    gradient.addColorStop(1, '#3a4adf');
+    ctx.fillStyle = gradient;
+
+    mags.forEach((m, i) => {
+        const x = PAD.left + (i / barCount) * W;
+        const normed = (m - minVal) / range;
+        const h = Math.max(1, normed * H);
+        const y = PAD.top + H - h;
+        ctx.fillRect(x, y, barW, h);
+    });
+
+    // X 軸ラベル（周波数）
+    ctx.fillStyle = '#555';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    const xTicks = Math.min(8, barCount);
+    for (let t = 0; t <= xTicks; t++) {
+        const idx = Math.round((t / xTicks) * (freqs.length - 1));
+        const x = PAD.left + (idx / barCount) * W;
+        const fVal = freqs[idx];
+        ctx.fillText(fVal >= 1000 ? (fVal / 1000).toFixed(1) + 'k' : fVal.toFixed(2), x, PAD.top + H + 18);
+    }
+
+    // 軸タイトル
+    ctx.fillStyle = '#666';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('周波数 (Hz)', PAD.left + W / 2, cssH - 4);
+
+    // Y 軸タイトル
+    ctx.save();
+    ctx.translate(14, PAD.top + H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(scaleType === 'db' ? '振幅 (dB)' : '振幅', 0, 0);
+    ctx.restore();
+
+    // 軸線
+    ctx.strokeStyle = '#3a3d55';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, PAD.top);
+    ctx.lineTo(PAD.left, PAD.top + H);
+    ctx.lineTo(PAD.left + W, PAD.top + H);
+    ctx.stroke();
+
+    // マウスホバー用データを保存
+    canvas._chartMeta = { PAD, W, H, mags, freqs, minVal, range, barW, dpr };
+}
+
+/* =========================================================
+   ツールチップ
+   ========================================================= */
+document.getElementById('chartCanvas').addEventListener('mousemove', e => {
+    const canvas = e.target;
+    const meta = canvas._chartMeta;
+    if (!meta) return;
+
+    const rect   = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const { PAD, W, mags, freqs } = meta;
+
+    const relX = mouseX - PAD.left;
+    if (relX < 0 || relX > W) { hideTooltip(); return; }
+
+    const idx = Math.round((relX / W) * (mags.length - 1));
+    if (idx < 0 || idx >= mags.length) { hideTooltip(); return; }
+
+    const tip = document.getElementById('tooltip');
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX + 12) + 'px';
+    tip.style.top  = (e.clientY - 32) + 'px';
+    tip.innerHTML  = `<b>${freqs[idx].toFixed(3)} Hz</b><br>振幅: ${mags[idx].toFixed(4)}`;
+});
+
+document.getElementById('chartCanvas').addEventListener('mouseleave', hideTooltip);
+
+function hideTooltip() {
+    document.getElementById('tooltip').style.display = 'none';
+}
+
+/* =========================================================
+   統計情報
+   ========================================================= */
+function updateStats(mags, freqs, rawN, paddedN, sampleRate) {
+    const statsCard = document.getElementById('statsCard');
+    const statsGrid = document.getElementById('statsGrid');
+    statsCard.style.display = '';
+
+    const maxMag  = Math.max(...mags);
+    const maxIdx  = mags.indexOf(maxMag);
+    const domFreq = freqs[maxIdx];
+    const freqRes = sampleRate / paddedN;
+    const rms     = Math.sqrt(mags.reduce((s, m) => s + m * m, 0) / mags.length);
+
+    statsGrid.innerHTML = [
+        ['入力点数',       `${rawN} 点`],
+        ['FFT サイズ',     `${paddedN} 点`],
+        ['周波数分解能',   `${freqRes.toFixed(4)} Hz/bin`],
+        ['最大成分周波数', `${domFreq.toFixed(3)} Hz`],
+        ['最大振幅',       maxMag.toFixed(4)],
+        ['RMS 振幅',       rms.toFixed(4)],
+    ].map(([label, value]) => `
+        <div class="stat-box">
+            <div class="stat-label">${label}</div>
+            <div class="stat-value">${value}</div>
+        </div>`).join('');
+}
+
+/* =========================================================
+   ピーク検出
+   ========================================================= */
+function showPeaks(mags, freqs) {
+    const peaksCard = document.getElementById('peaksCard');
+    const peakList  = document.getElementById('peakList');
+    peaksCard.style.display = '';
+
+    const peaks = mags.map((m, i) => ({ mag: m, freq: freqs[i], idx: i }))
+        .filter((p, i, arr) =>
+            i > 0 && i < arr.length - 1 &&
+            p.mag > arr[i - 1].mag &&
+            p.mag > arr[i + 1].mag)
+        .sort((a, b) => b.mag - a.mag)
+        .slice(0, 5);
+
+    const colors = ['#7c8fff', '#ff6b9d', '#ffd166', '#06d6a0', '#ef476f'];
+
+    if (peaks.length === 0) {
+        peakList.innerHTML = '<div style="color:#666;font-size:0.8rem;padding:6px">ピークが検出されませんでした。</div>';
+        return;
+    }
+
+    peakList.innerHTML = peaks.map((p, i) => `
+        <div class="peak-item" style="border-color:${colors[i]}">
+            <span class="freq"># ${i + 1} &nbsp; ${p.freq.toFixed(4)} Hz</span>
+            <span class="amp">振幅 ${p.mag.toFixed(4)}</span>
+        </div>`).join('');
+}
+
+/* =========================================================
+   エラー表示
+   ========================================================= */
+function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+/* =========================================================
+   初回実行
+   ========================================================= */
+runFFT();
+</script>
+</body>
+</html>
