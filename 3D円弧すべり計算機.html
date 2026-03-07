@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D円弧すべり計算機</title>
+    <style>
+        /* ======================================================
+           BASE / RESET
+        ====================================================== */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:           #0d1117;
+            --surface:      #161b22;
+            --surface2:     #1c2330;
+            --border:       #30363d;
+            --accent:       #e6a817;
+            --accent-dim:   rgba(230,168,23,.15);
+            --blue:         #4fc3f7;
+            --danger:       #f85149;
+            --warn:         #d29922;
+            --success:      #3fb950;
+            --text:         #e6edf3;
+            --text-muted:   #8b949e;
+            --text-dim:     #484f58;
+            --panel-w:      340px;
+            --radius:       8px;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ======================================================
+           3D CANVAS AREA
+        ====================================================== */
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        #canvas-container canvas { display: block; }
+
+        /* HUD overlays */
+        .hud {
+            position: absolute;
+            pointer-events: none;
+            font-size: 11px;
+            color: rgba(230,237,243,.55);
+            line-height: 1.8;
+        }
+        #hud-cam  { bottom: 16px; left: 16px; }
+        #hud-info { top: 16px;    left: 16px;
+            color: rgba(230,237,243,.8);
+            font-size: 12px;
+            font-weight: 500;
+        }
+        #hud-info strong { color: var(--accent); }
+
+        /* Legend */
+        #legend {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(22,27,34,.85);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            font-size: 11px;
+            color: var(--text-muted);
+            pointer-events: none;
+            line-height: 2;
+        }
+        .legend-dot {
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 2px;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        /* ======================================================
+           UI PANEL
+        ====================================================== */
+        #ui-panel {
+            width: var(--panel-w);
+            display: flex;
+            flex-direction: column;
+            background: var(--surface);
+            border-left: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        /* Panel header */
+        .panel-header {
+            padding: 18px 20px;
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .panel-header h2 {
+            font-size: 1em;
+            font-weight: 700;
+            letter-spacing: .3px;
+            color: var(--text);
+        }
+        .panel-header p {
+            font-size: .72em;
+            color: var(--text-muted);
+            margin-top: 3px;
+        }
+
+        /* Scrollable body */
+        .panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+        .panel-body::-webkit-scrollbar { width: 4px; }
+        .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        /* Section */
+        .section { margin-bottom: 22px; }
+
+        .section-title {
+            font-size: .68em;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            padding-bottom: 7px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 12px;
+        }
+
+        /* Input */
+        .input-group { margin-bottom: 10px; }
+
+        .input-group label {
+            display: block;
+            font-size: .76em;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+        .input-group label .unit {
+            color: var(--blue);
+            font-size: .9em;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 7px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: .88em;
+            outline: none;
+            transition: border-color .2s, background .2s;
+        }
+        input[type="number"]:focus {
+            border-color: var(--accent);
+            background: rgba(230,168,23,.05);
+        }
+        input[type="number"]:invalid { border-color: var(--danger); }
+
+        /* Preset chips */
+        .preset-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .chip {
+            flex: 1;
+            min-width: 60px;
+            padding: 6px 4px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-muted);
+            font-size: .7em;
+            text-align: center;
+            cursor: pointer;
+            transition: all .18s;
+            user-select: none;
+        }
+        .chip:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .chip.active {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* ======================================================
+           RESULT CARD
+        ====================================================== */
+        #result {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px;
+            margin-top: 4px;
+        }
+
+        .result-label {
+            font-size: .68em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 6px;
+        }
+
+        #fs-value {
+            font-size: 3.2em;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: -2px;
+            transition: color .35s;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Gauge */
+        .gauge-track {
+            position: relative;
+            height: 5px;
+            background: var(--border);
+            border-radius: 3px;
+            margin: 12px 0 10px;
+            overflow: hidden;
+        }
+        /* threshold markers */
+        .gauge-track::before {  /* Fs=1.0 at 33% */
+            content: '';
+            position: absolute;
+            left: 33%;
+            top: 0; bottom: 0;
+            width: 1px;
+            background: rgba(255,255,255,.15);
+        }
+        .gauge-track::after {   /* Fs=1.5 at 67% */
+            content: '';
+            position: absolute;
+            left: 67%;
+            top: 0; bottom: 0;
+            width: 1px;
+            background: rgba(255,255,255,.15);
+        }
+        #gauge-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width .4s ease, background .35s;
+        }
+
+        #fs-status {
+            font-size: .82em;
+            font-weight: 600;
+            margin-bottom: 14px;
+            transition: color .35s;
+        }
+
+        /* Stats grid */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 7px;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+        }
+        .stat-card .s-label {
+            font-size: .62em;
+            color: var(--text-dim);
+            margin-bottom: 3px;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+        }
+        .stat-card .s-val {
+            font-size: .88em;
+            font-weight: 600;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Footer */
+        .panel-footer {
+            flex-shrink: 0;
+            padding: 10px 16px;
+            border-top: 1px solid var(--border);
+            font-size: .68em;
+            color: var(--text-dim);
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ====================== 3D CANVAS ====================== -->
+<div id="canvas-container">
+    <div class="hud" id="hud-info">
+        <strong>3D 円弧すべり解析</strong> &nbsp;|&nbsp; Modified Fellenius 法 (3D)
+    </div>
+    <div class="hud" id="hud-cam">
+        左ドラッグ: 回転 &nbsp;·&nbsp; 右ドラッグ / スクロール: ズーム &nbsp;·&nbsp; 中ドラッグ: パン
+    </div>
+    <div id="legend">
+        <div><span class="legend-dot" style="background:#5a7a5a"></span>地形</div>
+        <div><span class="legend-dot" style="background:#ff4444;opacity:.6"></span>すべり球</div>
+        <div><span class="legend-dot" style="background:#44aaff;opacity:.7"></span>土塊コラム</div>
+    </div>
+</div>
+
+<!-- ====================== UI PANEL ====================== -->
+<div id="ui-panel">
+    <div class="panel-header">
+        <h2>3D 斜面安定解析</h2>
+        <p>球状すべり面 · カラム法 (Modified Fellenius)</p>
+    </div>
+
+    <div class="panel-body">
+
+        <!-- 土質プリセット -->
+        <div class="section">
+            <div class="section-title">土質プリセット</div>
+            <div class="preset-row">
+                <div class="chip" data-preset="sand"  onclick="applyPreset('sand')">砂質土</div>
+                <div class="chip" data-preset="clay"  onclick="applyPreset('clay')">粘性土</div>
+                <div class="chip" data-preset="rock"  onclick="applyPreset('rock')">岩盤</div>
+                <div class="chip" data-preset="soft"  onclick="applyPreset('soft')">軟弱地盤</div>
+            </div>
+        </div>
+
+        <!-- 土質定数 -->
+        <div class="section">
+            <div class="section-title">土質定数</div>
+            <div class="input-group">
+                <label>粘着力 c <span class="unit">(kN/m²)</span></label>
+                <input type="number" id="c" value="10" step="1" min="0">
+            </div>
+            <div class="input-group">
+                <label>内部摩擦角 φ <span class="unit">(度)</span></label>
+                <input type="number" id="phi" value="30" step="0.5" min="0" max="55">
+            </div>
+            <div class="input-group">
+                <label>単位重量 γ <span class="unit">(kN/m³)</span></label>
+                <input type="number" id="gamma" value="18" step="0.5" min="10" max="28">
+            </div>
+        </div>
+
+        <!-- すべり面 -->
+        <div class="section">
+            <div class="section-title">すべり球 — 中心座標 &amp; 半径</div>
+            <div class="input-group">
+                <label>中心 Xc <span class="unit">(m)</span> — 水平（法線方向）</label>
+                <input type="number" id="xc" value="0" step="1">
+            </div>
+            <div class="input-group">
+                <label>中心 Yc <span class="unit">(m)</span> — 鉛直方向</label>
+                <input type="number" id="yc" value="25" step="1">
+            </div>
+            <div class="input-group">
+                <label>中心 Zc <span class="unit">(m)</span> — 奥行き方向</label>
+                <input type="number" id="zc" value="0" step="1">
+            </div>
+            <div class="input-group">
+                <label>半径 R <span class="unit">(m)</span></label>
+                <input type="number" id="radius" value="20" min="3" step="1">
+            </div>
+        </div>
+
+        <!-- 結果 -->
+        <div class="section">
+            <div class="section-title">解析結果</div>
+            <div id="result">
+                <div class="result-label">安全率 Fs</div>
+                <div id="fs-value">--</div>
+                <div class="gauge-track">
+                    <div id="gauge-fill" style="width:0%;background:var(--text-dim)"></div>
+                </div>
+                <div id="fs-status" style="color:var(--text-dim)">パラメータを入力してください</div>
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="s-label">抵抗力 ΣR</div>
+                        <div class="s-val" id="stat-resist">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="s-label">駆動力 ΣD</div>
+                        <div class="s-val" id="stat-drive">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="s-label">土塊重量</div>
+                        <div class="s-val" id="stat-weight">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="s-label">有効コラム数</div>
+                        <div class="s-val" id="stat-cols">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /.panel-body -->
+
+    <div class="panel-footer">
+        地形モデル 100×100 m &nbsp;|&nbsp; 格子間隔 ~1.7 m
+    </div>
+</div><!-- /#ui-panel -->
+
+<!-- ====================== THREE.JS ====================== -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+"use strict";
+
+// ============================================================
+//  CONSTANTS
+// ============================================================
+const TERRAIN_SIZE = 100;
+const SEGMENTS     = 60;          // grid resolution
+const PANEL_W      = 340;
+
+// ============================================================
+//  SCENE / RENDERER / CAMERA
+// ============================================================
+const scene    = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog        = new THREE.FogExp2(0x0d1117, 0.006);
+
+let vpW = window.innerWidth - PANEL_W;
+let vpH = window.innerHeight;
+
+const camera = new THREE.PerspectiveCamera(45, vpW / vpH, 0.1, 2000);
+camera.position.set(80, 55, 75);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(vpW, vpH);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 8, 0);
+controls.enableDamping   = true;
+controls.dampingFactor   = 0.06;
+controls.minDistance     = 10;
+controls.maxDistance     = 400;
+controls.maxPolarAngle   = Math.PI * 0.52;
+controls.update();
+
+// ============================================================
+//  LIGHTS
+// ============================================================
+const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.3);
+sunLight.position.set(80, 130, 60);
+sunLight.castShadow = true;
+Object.assign(sunLight.shadow, {
+    mapSize: new THREE.Vector2(2048, 2048),
+});
+Object.assign(sunLight.shadow.camera, {
+    near: 1, far: 600,
+    left: -80, right: 80, top: 80, bottom: -80,
+});
+scene.add(sunLight);
+scene.add(new THREE.AmbientLight(0x334466, 1.0));
+scene.add(new THREE.HemisphereLight(0x7799cc, 0x553322, 0.6));
+
+// ============================================================
+//  GRID & AXES
+// ============================================================
+const grid = new THREE.GridHelper(TERRAIN_SIZE, 20, 0x1e2a3a, 0x1a2233);
+grid.position.y = 0.1;
+scene.add(grid);
+
+const axes = new THREE.AxesHelper(10);
+axes.position.set(-47, 0.1, -47);
+scene.add(axes);
+
+// ============================================================
+//  TERRAIN
+// ============================================================
+function getTerrainHeight(x, z) {
+    // Primary slope: x = -20..+20 → height 0..20
+    const slope = x < -20 ? 0 : x > 20 ? 20 : (x + 20) * 0.5;
+    // Gentle undulation for realism
+    const ripple = Math.sin(x * 0.13) * 0.35 + Math.cos(z * 0.11) * 0.28;
+    return slope + ripple;
+}
+
+function buildTerrain() {
+    const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, SEGMENTS, SEGMENTS);
+    const pos  = geo.attributes.position;
+    const cols = new Float32Array(pos.count * 3);
+    const c    = new THREE.Color();
+
+    for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getY(i);    // PlaneGeometry Y → world Z after rotation
+        const h = getTerrainHeight(x, z);
+        pos.setZ(i, h);
+
+        // Elevation-based vertex colour: dark olive-brown → muted sage
+        const t = Math.min(1, Math.max(0, h / 20));
+        c.setHSL(0.12 - t * 0.06, 0.38 - t * 0.1, 0.20 + t * 0.22);
+        cols[i * 3]     = c.r;
+        cols[i * 3 + 1] = c.g;
+        cols[i * 3 + 2] = c.b;
+    }
+
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    geo.computeVertexNormals();
+
+    const mat = new THREE.MeshPhongMaterial({
+        vertexColors: true,
+        shininess: 8,
+        side: THREE.DoubleSide,
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
+    return mesh;
+}
+
+scene.add(buildTerrain());
+
+// ============================================================
+//  SLIP SPHERE (solid + wireframe)
+// ============================================================
+const sphereGeo = new THREE.SphereGeometry(1, 48, 32);
+
+const slipSolid = new THREE.Mesh(sphereGeo, new THREE.MeshPhongMaterial({
+    color: 0xff3333,
+    transparent: true,
+    opacity: 0.10,
+    side: THREE.BackSide,
+    depthWrite: false,
+}));
+
+const slipWire = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.SphereGeometry(1, 24, 16)),
+    new THREE.LineBasicMaterial({ color: 0xff5555, transparent: true, opacity: 0.35 })
+);
+
+[slipSolid, slipWire].forEach(m => scene.add(m));
+
+// ============================================================
+//  COLUMN GROUP
+// ============================================================
+const colGroup = new THREE.Group();
+scene.add(colGroup);
+
+const COL_MAT = new THREE.MeshBasicMaterial({
+    color: 0x44aaff,
+    transparent: true,
+    opacity: 0.20,
+    wireframe: true,
+});
+
+// ============================================================
+//  PRESETS
+// ============================================================
+const PRESETS = {
+    sand:  { c:  0, phi: 35, gamma: 19 },
+    clay:  { c: 20, phi: 15, gamma: 17 },
+    rock:  { c: 50, phi: 42, gamma: 24 },
+    soft:  { c:  5, phi:  8, gamma: 15 },
+};
+
+function applyPreset(key) {
+    const p = PRESETS[key];
+    if (!p) return;
+    setValue('c',     p.c);
+    setValue('phi',   p.phi);
+    setValue('gamma', p.gamma);
+
+    document.querySelectorAll('.chip').forEach(el => {
+        el.classList.toggle('active', el.dataset.preset === key);
+    });
+    scheduleUpdate();
+}
+
+function setValue(id, v) {
+    document.getElementById(id).value = v;
+}
+
+// ============================================================
+//  DEBOUNCED UPDATE
+// ============================================================
+let _timer = null;
+function scheduleUpdate() {
+    clearTimeout(_timer);
+    _timer = setTimeout(runAnalysis, 140);
+}
+
+// ============================================================
+//  ANALYSIS
+// ============================================================
+function runAnalysis() {
+    const c     = Math.max(0, parseFloat(document.getElementById('c').value)     || 0);
+    const phi   = (Math.max(0, parseFloat(document.getElementById('phi').value)   || 0)) * Math.PI / 180;
+    const gamma = Math.max(1, parseFloat(document.getElementById('gamma').value)  || 18);
+    const xc    = parseFloat(document.getElementById('xc').value)     || 0;
+    const yc    = parseFloat(document.getElementById('yc').value)     || 25;
+    const zc    = parseFloat(document.getElementById('zc').value)     || 0;
+    const R     = Math.max(1, parseFloat(document.getElementById('radius').value) || 20);
+
+    // Sync sphere position/scale
+    [slipSolid, slipWire].forEach(m => {
+        m.position.set(xc, yc, zc);
+        m.scale.set(R, R, R);
+    });
+
+    // Clear old columns
+    while (colGroup.children.length) colGroup.remove(colGroup.children[0]);
+
+    const step = TERRAIN_SIZE / SEGMENTS;
+    let sumR = 0, sumD = 0, totalW = 0, nCols = 0;
+
+    for (let xi = -TERRAIN_SIZE / 2; xi <= TERRAIN_SIZE / 2; xi += step) {
+        for (let zi = -TERRAIN_SIZE / 2; zi <= TERRAIN_SIZE / 2; zi += step) {
+            // Horizontal distance from sphere centre (plan view)
+            const r2 = (xi - xc) ** 2 + (zi - zc) ** 2;
+            if (r2 >= R * R) continue;
+
+            const ySlip   = yc - Math.sqrt(Math.max(0, R * R - r2));
+            const yGround = getTerrainHeight(xi, zi);
+            if (yGround <= ySlip) continue;
+
+            const h        = yGround - ySlip;
+            const W        = h * step * step * gamma;
+            const sinAlpha = Math.sqrt(r2) / R;
+            const cosAlpha = Math.sqrt(Math.max(0, 1 - sinAlpha * sinAlpha));
+            const area     = (step * step) / Math.max(cosAlpha, 0.01);
+
+            sumR   += c * area + W * cosAlpha * Math.tan(phi);
+            sumD   += W * sinAlpha;
+            totalW += W;
+            nCols++;
+
+            // Visualise every 4th column to reduce overdraw
+            const ix = Math.round((xi + TERRAIN_SIZE / 2) / step);
+            const iz = Math.round((zi + TERRAIN_SIZE / 2) / step);
+            if ((ix + iz) % 4 === 0) {
+                const col = new THREE.Mesh(
+                    new THREE.BoxGeometry(step * 0.85, h, step * 0.85),
+                    COL_MAT
+                );
+                col.position.set(xi, ySlip + h / 2, zi);
+                colGroup.add(col);
+            }
+        }
+    }
+
+    const fs = sumD > 0 ? sumR / sumD : 0;
+    renderResult(fs, sumR, sumD, totalW, nCols);
+}
+
+// ============================================================
+//  RESULT RENDERING
+// ============================================================
+function renderResult(fs, sumR, sumD, totalW, nCols) {
+    const fsEl    = document.getElementById('fs-value');
+    const gaugeEl = document.getElementById('gauge-fill');
+    const statusEl = document.getElementById('fs-status');
+
+    if (fs <= 0 || !isFinite(fs)) {
+        fsEl.textContent        = 'N/A';
+        fsEl.style.color        = 'var(--text-dim)';
+        gaugeEl.style.width     = '0%';
+        gaugeEl.style.background = 'var(--text-dim)';
+        statusEl.textContent    = 'すべり面が地表と交差していません';
+        statusEl.style.color    = 'var(--text-dim)';
+        ['stat-resist','stat-drive','stat-weight','stat-cols'].forEach(id => {
+            document.getElementById(id).textContent = '--';
+        });
+        return;
+    }
+
+    fsEl.textContent = fs.toFixed(3);
+
+    // Thresholds: <1.0 danger, 1.0-1.2 warn, 1.2-1.5 caution, ≥1.5 safe
+    let color, label, gaugePct;
+    if (fs < 1.0) {
+        color    = 'var(--danger)';
+        label    = '⚠ 危険 — 崩壊のおそれあり (Fs < 1.0)';
+        gaugePct = fs * 33;
+    } else if (fs < 1.2) {
+        color    = '#e67e22';
+        label    = '△ 要注意 — 安全率が低い (1.0 ≤ Fs < 1.2)';
+        gaugePct = 33 + (fs - 1.0) / 0.2 * 17;
+    } else if (fs < 1.5) {
+        color    = 'var(--warn)';
+        label    = '○ 概ね安定 (1.2 ≤ Fs < 1.5)';
+        gaugePct = 50 + (fs - 1.2) / 0.3 * 17;
+    } else {
+        color    = 'var(--success)';
+        label    = '◎ 安定 (Fs ≥ 1.5)';
+        gaugePct = Math.min(100, 67 + (fs - 1.5) * 22);
+    }
+
+    fsEl.style.color         = color;
+    gaugeEl.style.width      = gaugePct + '%';
+    gaugeEl.style.background = color;
+    statusEl.textContent     = label;
+    statusEl.style.color     = color;
+
+    document.getElementById('stat-resist').textContent = fmt(sumR)   + ' kN';
+    document.getElementById('stat-drive').textContent  = fmt(sumD)   + ' kN';
+    document.getElementById('stat-weight').textContent = fmt(totalW) + ' kN';
+    document.getElementById('stat-cols').textContent   = nCols + ' 個';
+}
+
+function fmt(v) {
+    if (!isFinite(v)) return '--';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + ' M';
+    if (v >= 1e3) return (v / 1e3).toFixed(1) + ' k';
+    return v.toFixed(0);
+}
+
+// ============================================================
+//  EVENT WIRING
+// ============================================================
+document.querySelectorAll('input[type="number"]').forEach(el =>
+    el.addEventListener('input', () => {
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        scheduleUpdate();
+    })
+);
+
+// ============================================================
+//  ANIMATION LOOP
+// ============================================================
+(function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+})();
+
+// ============================================================
+//  RESIZE
+// ============================================================
+window.addEventListener('resize', () => {
+    vpW = window.innerWidth - PANEL_W;
+    vpH = window.innerHeight;
+    camera.aspect = vpW / vpH;
+    camera.updateProjectionMatrix();
+    renderer.setSize(vpW, vpH);
+});
+
+// Initial calculation
+runAnalysis();
+</script>
+
+</body>
+</html>
