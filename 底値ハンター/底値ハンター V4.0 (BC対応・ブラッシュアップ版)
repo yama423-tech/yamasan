@@ -1,0 +1,379 @@
+//@version=5
+indicator("底値ハンター V4.0 (BC対応版)", overlay=true, shorttitle="底値ハンターV4.0", max_labels_count=500)
+
+// ==========================================
+// 1. 設定
+// ==========================================
+grpSignal = "シグナル感度"
+lookback      = input.int(5,    "ダイバージェンス判定期間(本)",         minval=1,            group=grpSignal)
+rsiLen        = input.int(14,   "RSI期間",                              group=grpSignal)
+rsiOversold   = input.int(30,   "RSI売られすぎライン",                  group=grpSignal)
+rsiOverbought = input.int(70,   "RSI買われすぎライン",                  group=grpSignal)
+minRsiLift    = input.float(2.0,"ダイバージェンス時のRSI改善幅(最小)", minval=0.0, step=0.5, group=grpSignal)
+cooldownBars  = input.int(3,    "シグナル間隔(バー)",                   minval=0,            group=grpSignal)
+requireBull   = input.bool(true,"底値シグナル：陽線確定を必須にする",   group=grpSignal)
+requireBear   = input.bool(true,"天井シグナル：陰線確定を必須にする",   group=grpSignal)
+minScore      = input.int(4,    "シグナル発火の最低スコア(最大14)",     minval=1, maxval=14, group=grpSignal)
+
+grpBB = "ボラティリティ"
+bbLen         = input.int(20,   "ボリンジャーバンド期間",               group=grpBB)
+bbMult        = input.float(2.0,"バンド偏差(σ)",                       group=grpBB)
+useVolFilter  = input.bool(true,"低ボラ相場フィルターを使う",           group=grpBB)
+minBbWidthPct = input.float(1.2,"最低BB幅(%)",                         minval=0.1, step=0.1, group=grpBB)
+
+grpMACD = "MACD"
+macdFast      = input.int(12,   "Fast期間",                             group=grpMACD)
+macdSlow      = input.int(26,   "Slow期間",                             group=grpMACD)
+macdSig       = input.int(9,    "Signal期間",                           group=grpMACD)
+
+grpFilter = "環境フィルター"
+useVol        = input.bool(true,"出来高(クライマックス)判定",           group=grpFilter)
+volMult       = input.float(2.0,"パニック判定(平均出来高の何倍)",       minval=0.1, step=0.1, group=grpFilter)
+trendMode     = input.string("無効","トレンド条件",
+     options=["無効","逆張り(EMA200下)","順張り(EMA200上)"],            group=grpFilter)
+useVWAP       = input.bool(true,"VWAPフィルター",                       group=grpFilter)
+
+grpBC = "バイングクライマックス"
+showBC        = input.bool(true, "バイングクライマックスを表示",        group=grpBC)
+bcVolMult     = input.float(2.0, "BC出来高倍率(平均の何倍)",            minval=0.5, step=0.1, group=grpBC)
+bcRsiThresh   = input.int(70,    "BC用RSI閾値",                         minval=50, maxval=95, group=grpBC)
+bcMinScore    = input.int(4,     "BC最低スコア(最大14)",                 minval=1, maxval=14,  group=grpBC)
+
+grpPanel = "モニターパネル"
+showPanel     = input.bool(true,"モニターパネルを表示",                 group=grpPanel)
+panelPos      = input.string("右中","パネル位置",
+     options=["右上","右中","右下","左上","左中","左下"],               group=grpPanel)
+
+// ==========================================
+// 2. 指標計算
+// ==========================================
+rsi                          = ta.rsi(close, rsiLen)
+[mid, upper, lower]          = ta.bb(close, bbLen, bbMult)
+ema200                       = ta.ema(close, 200)
+ema5                         = ta.ema(close, 5)
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSig)
+vwapVal                      = ta.vwap
+
+volMa    = ta.sma(volume, 20)
+volRatio = volMa != 0 ? volume / volMa : 0.0
+
+// ==========================================
+// 3. フィルター判定
+// ==========================================
+isPanicVol   = useVol      ? (volume > volMa * volMult) : true
+bbWidthPct   = mid != 0.0  ? (upper - lower) / mid * 100.0 : 0.0
+volatilityOk = useVolFilter ? bbWidthPct >= minBbWidthPct : true
+
+// 底値用フィルター
+trendOkBottom = trendMode == "逆張り(EMA200下)" ? close < ema200
+              : trendMode == "順張り(EMA200上)" ? close > ema200 : true
+bullOk        = requireBull ? close > open : true
+vwapBelow     = close < vwapVal
+vwapOkBottom  = useVWAP    ? vwapBelow     : true
+
+// 天井用フィルター (トレンド条件を反転)
+trendOkTop    = trendMode == "逆張り(EMA200下)" ? close > ema200
+              : trendMode == "順張り(EMA200上)" ? close < ema200 : true
+bearOk        = requireBear ? close < open : true
+vwapAbove     = close > vwapVal
+vwapOkTop     = useVWAP    ? vwapAbove     : true
+
+// ==========================================
+// 4. パターン検知 (底値：セリングクライマックス)
+// ==========================================
+// A. RSIダイバージェンス (強気)
+wasOversold   = ta.lowest(rsi, 10) < rsiOversold
+isDivRaw      = (low < low[lookback]) and (rsi > rsi[lookback]) and wasOversold
+isDiv         = isDivRaw and (rsi - rsi[lookback] >= minRsiLift)
+
+// B. セリングクライマックス (ピンバー + BB下限割れ + パニック出来高)
+float body       = math.abs(close - open)
+float lowerWick  = math.min(close, open) - low
+float upperWick  = high - math.max(close, open)
+bool  isPinbar   = lowerWick > body * 1.5
+bool  isSCrash   = (low < lower) and isPanicVol and isPinbar
+
+// C. MACD判定 (底値用)
+macdBull  = macdLine > signalLine
+macdCross = ta.crossover(macdLine, signalLine)
+
+// ==========================================
+// 4b. パターン検知 (天井：バイングクライマックス)
+// ==========================================
+// A. RSIベアリッシュダイバージェンス (弱気)
+wasOverbought   = ta.highest(rsi, 10) > rsiOverbought
+isDivBearRaw    = (high > high[lookback]) and (rsi < rsi[lookback]) and wasOverbought
+isDivBear       = isDivBearRaw and (rsi[lookback] - rsi >= minRsiLift)
+
+// B. バイングクライマックス (上ヒゲ + BB上限突破 + パニック出来高)
+bool  isBCPanicVol = useVol ? (volume > volMa * bcVolMult) : true
+bool  isShootStar  = upperWick > body * 1.5
+bool  isBCrash     = (high > upper) and isBCPanicVol and isShootStar
+
+// C. MACD判定 (天井用)
+macdBear      = macdLine < signalLine
+macdDeadCross = ta.crossunder(macdLine, signalLine)
+
+// ==========================================
+// 5. スコアリング & シグナル (底値)
+// ==========================================
+cross5EMA   = ta.crossover(close, ema5)
+
+buyDiv      = isDiv       and cross5EMA and trendOkBottom and volatilityOk and bullOk
+buyCrash    = isSCrash    and trendOkBottom and volatilityOk and bullOk
+buyRecovery = wasOversold  and cross5EMA and rsi > rsiOversold and trendOkBottom and volatilityOk and bullOk
+
+// 底値スコア計算 (最大 3+3+1+2+2+2+1 = 14点)
+rsiScoreB  = wasOversold   ? 3 : rsi < 40       ? 1 : 0
+macdScoreB = macdCross     ? 3 : macdBull        ? 1 : 0
+vwapScoreB = vwapBelow     ? 1 : 0
+volScoreB  = isPanicVol    ? 2 : volRatio > 1.5  ? 1 : 0
+divScoreB  = isDiv         ? 2 : isDivRaw        ? 1 : 0
+bbScoreB   = close < lower ? 2 : close < mid     ? 1 : 0
+pinScoreB  = isPinbar      ? 1 : 0
+
+signalScoreB = rsiScoreB + macdScoreB + vwapScoreB + volScoreB + divScoreB + bbScoreB + pinScoreB
+
+// 底値統合シグナル
+var int lastBuy = 0
+rawSignalB    = (buyDiv or buyCrash or buyRecovery) and signalScoreB >= minScore
+signalB       = rawSignalB and (bar_index - lastBuy > cooldownBars)
+if signalB
+    lastBuy := bar_index
+
+strongSignalB = signalB and signalScoreB >= 8
+
+// ==========================================
+// 5b. スコアリング & シグナル (天井：バイングクライマックス)
+// ==========================================
+cross5EMAdown = ta.crossunder(close, ema5)
+
+sellDiv      = isDivBear    and cross5EMAdown and trendOkTop and volatilityOk and bearOk
+sellCrash    = isBCrash     and trendOkTop and volatilityOk and bearOk
+sellExhaust  = wasOverbought and cross5EMAdown and rsi < rsiOverbought and trendOkTop and volatilityOk and bearOk
+
+// 天井スコア計算 (最大 3+3+1+2+2+2+1 = 14点)
+rsiScoreT  = wasOverbought   ? 3 : rsi > 60         ? 1 : 0
+macdScoreT = macdDeadCross   ? 3 : macdBear          ? 1 : 0
+vwapScoreT = vwapAbove       ? 1 : 0
+volScoreT  = isBCPanicVol    ? 2 : volRatio > 1.5    ? 1 : 0
+divScoreT  = isDivBear       ? 2 : isDivBearRaw      ? 1 : 0
+bbScoreT   = close > upper   ? 2 : close > mid       ? 1 : 0
+starScoreT = isShootStar     ? 1 : 0
+
+signalScoreT = rsiScoreT + macdScoreT + vwapScoreT + volScoreT + divScoreT + bbScoreT + starScoreT
+
+// 天井統合シグナル
+var int lastSell = 0
+rawSignalT    = showBC and (sellDiv or sellCrash or sellExhaust) and signalScoreT >= bcMinScore
+signalT       = rawSignalT and (bar_index - lastSell > cooldownBars)
+if signalT
+    lastSell := bar_index
+
+strongSignalT = signalT and signalScoreT >= 8
+
+// ==========================================
+// 6. チャート描画
+// ==========================================
+p1 = plot(upper,   "BB Upper", color=color.new(color.red,  85))
+p2 = plot(lower,   "BB Lower", color=color.new(color.blue, 85))
+fill(p1, p2, color=color.new(color.gray, 93))
+plot(mid,    "BB Mid (20SMA)", color=color.orange,                 linewidth=1)
+plot(ema5,   "5 EMA",          color=color.aqua,                   linewidth=2)
+plot(ema200, "200 EMA",        color=color.new(color.yellow, 40),  linewidth=1)
+plot(vwapVal,"VWAP",           color=color.new(color.fuchsia, 25), linewidth=1, style=plot.style_circles)
+
+// ─── 底値シグナル (下側表示) ───
+plotshape(signalB and buyCrash,
+     title="SC Panic Buy", location=location.belowbar,
+     color=color.purple, style=shape.labelup, size=size.normal,
+     text="SC\nBOTTOM", textcolor=color.white)
+plotshape(signalB and buyDiv and not buyCrash,
+     title="Div Buy", location=location.belowbar,
+     color=color.orange, style=shape.labelup, size=size.normal,
+     text="Div\nBUY", textcolor=color.white)
+plotshape(signalB and buyRecovery and not buyDiv and not buyCrash,
+     title="Recovery Buy", location=location.belowbar,
+     color=color.white, style=shape.circle, size=size.small)
+plotshape(strongSignalB,
+     title="Strong Bottom", location=location.belowbar,
+     color=color.lime, style=shape.triangleup, size=size.tiny,
+     text="A+", textcolor=color.black)
+
+// ─── バイングクライマックス (天井シグナル：上側表示) ───
+plotshape(signalT and sellCrash,
+     title="BC Panic Sell", location=location.abovebar,
+     color=color.red, style=shape.labeldown, size=size.normal,
+     text="BC\nTOP", textcolor=color.white)
+plotshape(signalT and sellDiv and not sellCrash,
+     title="Bear Div Sell", location=location.abovebar,
+     color=color.maroon, style=shape.labeldown, size=size.normal,
+     text="Div\nSELL", textcolor=color.white)
+plotshape(signalT and sellExhaust and not sellDiv and not sellCrash,
+     title="Exhaust Sell", location=location.abovebar,
+     color=color.gray, style=shape.xcross, size=size.small)
+plotshape(strongSignalT,
+     title="Strong Top", location=location.abovebar,
+     color=color.red, style=shape.triangledown, size=size.tiny,
+     text="A+", textcolor=color.white)
+
+// ==========================================
+// 7. モニターパネル
+// ==========================================
+C_OK   = color.new(color.lime,   0)
+C_WARN = color.new(color.yellow, 0)
+C_NG   = color.new(color.red,    0)
+C_NA   = color.new(color.gray,   0)
+C_HD   = color.new(color.white,  0)
+BG_H   = color.new(color.navy,  35)
+BG_D   = color.new(color.black, 50)
+BG_BC  = color.new(#550000,     35)
+
+tPos = panelPos == "右上" ? position.top_right    :
+       panelPos == "右中" ? position.middle_right  :
+       panelPos == "右下" ? position.bottom_right  :
+       panelPos == "左上" ? position.top_left      :
+       panelPos == "左中" ? position.middle_left   : position.bottom_left
+
+var table panel = table.new(tPos, 3, 18,
+     bgcolor      = color.new(color.black, 15),
+     border_width = 1, border_color = color.new(color.gray, 55),
+     frame_width  = 2, frame_color  = color.new(color.gray, 30))
+
+if showPanel and barstate.islast
+
+    // ─── スペーサー行 × 2 ───
+    table.cell(panel, 0, 0, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(panel, 1, 0, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(panel, 2, 0, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(panel, 0, 1, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(panel, 1, 1, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(panel, 2, 1, "", bgcolor=color.new(color.black, 100), text_size=size.tiny)
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 底値シグナル セクション
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ─── ヘッダー (row 2) ───
+    table.cell(panel, 0, 2, "底値ハンター V4.0", text_color=C_HD, bgcolor=BG_H, text_size=size.small)
+    table.cell(panel, 1, 2, "現在値",            text_color=C_HD, bgcolor=BG_H, text_size=size.small)
+    table.cell(panel, 2, 2, "判定",              text_color=C_HD, bgcolor=BG_H, text_size=size.small)
+
+    // ─── RSI (row 3) ───
+    r_clr = rsiScoreB == 3 ? C_OK : rsiScoreB == 1 ? C_WARN : C_NG
+    r_txt = rsiScoreB == 3 ? "✓ 売られ過ぎ" : rsiScoreB == 1 ? "△ 警戒域" : "✗ 通常"
+    table.cell(panel, 0, 3, "RSI",                             text_color=C_HD,  bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 3, str.tostring(math.round(rsi, 1)), text_color=r_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 3, r_txt,                             text_color=r_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── MACD (row 4) ───
+    m_clr = macdScoreB == 3 ? C_OK : macdScoreB == 1 ? C_WARN : C_NG
+    m_txt = macdScoreB == 3 ? "✓ GC" : macdScoreB == 1 ? "△ 上向き" : "✗ 下向き"
+    table.cell(panel, 0, 4, "MACD",                                text_color=C_HD,  bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 4, str.tostring(math.round(macdLine, 3)), text_color=m_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 4, m_txt,                                 text_color=m_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── VWAP (row 5) ───
+    v_clr = vwapBelow ? C_OK : C_NG
+    v_txt = vwapBelow ? "✓ VWAP下(底値圏)" : "✗ VWAP上"
+    table.cell(panel, 0, 5, "VWAP",                               text_color=C_HD,  bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 5, str.tostring(math.round(vwapVal, 2)), text_color=v_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 5, v_txt,                                text_color=v_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── 出来高比 (row 6) ───
+    vl_clr = volScoreB == 2 ? C_OK : volScoreB == 1 ? C_WARN : C_NA
+    vl_txt = volScoreB == 2 ? "✓ パニック売り" : volScoreB == 1 ? "△ 増加中" : "- 平常"
+    table.cell(panel, 0, 6, "出来高比",                                   text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 6, str.tostring(math.round(volRatio, 1)) + "x", text_color=vl_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 6, vl_txt,                                       text_color=vl_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── BB幅% (row 7) ───
+    b_clr = bbScoreB == 2 ? C_OK : bbScoreB == 1 ? C_WARN : C_NG
+    b_txt = bbScoreB == 2 ? "✓ 下限割れ" : bbScoreB == 1 ? "△ 下半分" : "✗ 上半分/低ボラ"
+    table.cell(panel, 0, 7, "BB幅%",                                       text_color=C_HD,  bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 7, str.tostring(math.round(bbWidthPct, 2)) + "%", text_color=b_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 7, b_txt,                                         text_color=b_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── RSIダイバージェンス (row 8) ───
+    d_clr = divScoreB == 2 ? C_OK : divScoreB == 1 ? C_WARN : C_NA
+    d_txt = divScoreB == 2 ? "✓ 確認" : divScoreB == 1 ? "△ 弱い" : "- なし"
+    table.cell(panel, 0, 8, "RSIダイバージェンス", text_color=C_HD,  bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 8, "",                    text_color=d_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 8, d_txt,                 text_color=d_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── ピンバー (row 9) ───
+    pi_clr = isPinbar ? C_OK : C_NA
+    pi_txt = isPinbar ? "✓ あり" : "- なし"
+    table.cell(panel, 0, 9, "ピンバー(下ヒゲ)", text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 1, 9, "",                  text_color=pi_clr, bgcolor=BG_D, text_size=size.small)
+    table.cell(panel, 2, 9, pi_txt,              text_color=pi_clr, bgcolor=BG_D, text_size=size.small)
+
+    // ─── 底値スコア (row 10) ───
+    sc_clr = signalScoreB >= 8 ? C_OK : signalScoreB >= 5 ? C_WARN : C_NG
+    sc_rnk = signalScoreB >= 8 ? "A+ 強" : signalScoreB >= 5 ? "B 普通" : signalScoreB >= 3 ? "C 弱" : "D"
+    table.cell(panel, 0, 10, "底値スコア",                          text_color=C_HD,   bgcolor=BG_H, text_size=size.small)
+    table.cell(panel, 1, 10, str.tostring(signalScoreB) + "/14",   text_color=sc_clr, bgcolor=BG_H, text_size=size.small)
+    table.cell(panel, 2, 10, sc_rnk,                                text_color=sc_clr, bgcolor=BG_H, text_size=size.small)
+
+    // ─── 底値シグナル状態 (row 11) ───
+    sg_bg  = strongSignalB ? color.new(color.lime,   55)
+           : signalB       ? color.new(color.yellow, 55) : color.new(color.gray, 70)
+    sg_clr = strongSignalB ? C_OK : signalB ? C_WARN : C_NA
+    sg_txt = strongSignalB ? "★ 強シグナル発火！" : signalB ? "▲ シグナル発火" : "　待機中..."
+    table.cell(panel, 0, 11, "底値シグナル", text_color=C_HD,   bgcolor=sg_bg, text_size=size.small)
+    table.cell(panel, 1, 11, sg_txt,         text_color=sg_clr, bgcolor=sg_bg, text_size=size.small)
+    table.cell(panel, 2, 11, "",             text_color=sg_clr, bgcolor=sg_bg, text_size=size.small)
+    table.merge_cells(panel, 1, 11, 2, 11)
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // バイングクライマックス セクション
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if showBC
+        // ─── BC ヘッダー (row 12) ───
+        table.cell(panel, 0, 12, "バイングクライマックス", text_color=C_HD, bgcolor=BG_BC, text_size=size.small)
+        table.cell(panel, 1, 12, "現在値",                 text_color=C_HD, bgcolor=BG_BC, text_size=size.small)
+        table.cell(panel, 2, 12, "判定",                   text_color=C_HD, bgcolor=BG_BC, text_size=size.small)
+
+        // ─── RSI過熱 (row 13) ───
+        rt_clr = rsiScoreT == 3 ? C_NG : rsiScoreT == 1 ? C_WARN : C_OK
+        rt_txt = rsiScoreT == 3 ? "⚠ 買われ過ぎ" : rsiScoreT == 1 ? "△ 過熱域" : "✓ 通常"
+        table.cell(panel, 0, 13, "RSI",                             text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 1, 13, str.tostring(math.round(rsi, 1)), text_color=rt_clr, bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 2, 13, rt_txt,                            text_color=rt_clr, bgcolor=BG_D, text_size=size.small)
+
+        // ─── MACD (天井) (row 14) ───
+        mt_clr = macdScoreT == 3 ? C_NG : macdScoreT == 1 ? C_WARN : C_OK
+        mt_txt = macdScoreT == 3 ? "⚠ DC" : macdScoreT == 1 ? "△ 下向き" : "✓ 上向き"
+        table.cell(panel, 0, 14, "MACD",                                text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 1, 14, str.tostring(math.round(macdLine, 3)), text_color=mt_clr, bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 2, 14, mt_txt,                                 text_color=mt_clr, bgcolor=BG_D, text_size=size.small)
+
+        // ─── 出来高(BC) (row 15) ───
+        vt_clr = volScoreT == 2 ? C_NG : volScoreT == 1 ? C_WARN : C_NA
+        vt_txt = volScoreT == 2 ? "⚠ パニック買い" : volScoreT == 1 ? "△ 増加中" : "- 平常"
+        table.cell(panel, 0, 15, "出来高(BC)",                                text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 1, 15, str.tostring(math.round(volRatio, 1)) + "x", text_color=vt_clr, bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 2, 15, vt_txt,                                       text_color=vt_clr, bgcolor=BG_D, text_size=size.small)
+
+        // ─── 上ヒゲ(シューティングスター) (row 16) ───
+        ss_clr = isShootStar ? C_NG : C_NA
+        ss_txt = isShootStar ? "⚠ あり" : "- なし"
+        table.cell(panel, 0, 16, "上ヒゲ(射撃星)", text_color=C_HD,   bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 1, 16, "",                text_color=ss_clr, bgcolor=BG_D, text_size=size.small)
+        table.cell(panel, 2, 16, ss_txt,            text_color=ss_clr, bgcolor=BG_D, text_size=size.small)
+
+        // ─── 天井スコア (row 17) ───
+        st_clr = signalScoreT >= 8 ? C_NG : signalScoreT >= 5 ? C_WARN : C_OK
+        st_rnk = signalScoreT >= 8 ? "A+ 危険" : signalScoreT >= 5 ? "B 警戒" : signalScoreT >= 3 ? "C 軽微" : "D 安全"
+        st_bg  = strongSignalT ? color.new(color.red, 55)
+               : signalT       ? color.new(color.yellow, 55) : BG_H
+        table.cell(panel, 0, 17, "天井スコア",                          text_color=C_HD,   bgcolor=st_bg, text_size=size.small)
+        table.cell(panel, 1, 17, str.tostring(signalScoreT) + "/14",   text_color=st_clr, bgcolor=st_bg, text_size=size.small)
+        table.cell(panel, 2, 17, st_rnk,                                text_color=st_clr, bgcolor=st_bg, text_size=size.small)
+
+// ==========================================
+// 8. アラート
+// ==========================================
+alertcondition(signalB,       "底値ハンター・エントリー",   "底打ちからの反転シグナル点灯！")
+alertcondition(strongSignalB, "底値ハンター・強シグナル",   "複数条件一致の強い反転シグナルです。")
+alertcondition(signalT,       "バイングクライマックス警報", "天井圏でバイングクライマックス検出！利確・売り検討。")
+alertcondition(strongSignalT, "BC・強シグナル",             "複数条件一致の強い天井シグナルです。即座に対応を。")
