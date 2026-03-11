@@ -202,8 +202,10 @@ rsi     = ta.rsi(price, 14)
 [dp, dm, adx] = ta.dmi(14, 14)
 
 // 出来高フィルター
-volMa = ta.sma(volume, 20)
-volOk = not adj_volReq or (volume > volMa)
+// 指数(N225,TOPIX等)や一部暗号資産は volume=0/na のためフィルター自動バイパス
+volMa       = ta.sma(volume, 20)
+bool hasVol = not na(volume) and volume > 0 and not na(volMa) and volMa > 0
+volOk       = (not adj_volReq) or (not hasVol) or (volume > volMa)
 
 //=============================================================================
 // 9. シグナル & トレード管理
@@ -304,9 +306,11 @@ if barstate.islast
     table.cell(dash, 0, 5, "RSI (Fl)", bgcolor=color.gray, text_color=color.white)
     table.cell(dash, 1, 5, str.tostring(rsi, "#.#") + " (" + str.tostring(p_rsiFloor) + ")", bgcolor=rsi > p_rsiFloor ? color.green : color.black, text_color=color.white)
 
-    // Row 6: VolRatio
+    // Row 6: VolRatio（出来高なし銘柄は "N/A" 表示）
     table.cell(dash, 0, 6, "VolRatio", bgcolor=color.gray, text_color=color.white)
-    table.cell(dash, 1, 6, str.tostring(_volRatio, "#.##"), bgcolor=_volRatio > 1.5 ? color.orange : color.black, text_color=color.white)
+    _volText = hasVol ? str.tostring(_volRatio, "#.##") : "N/A (bypass)"
+    _volBg   = not hasVol ? color.new(color.purple, 50) : _volRatio > 1.5 ? color.orange : color.black
+    table.cell(dash, 1, 6, _volText, bgcolor=_volBg, text_color=color.white)
 
     // Row 7: PnL
     pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
