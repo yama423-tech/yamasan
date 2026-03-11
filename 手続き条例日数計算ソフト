@@ -17,6 +17,10 @@
         .result-item { margin-bottom: 10px; font-size: 1.1em; }
         .result-item span { font-weight: bold; color: #c0392b; }
         .note { font-size: 0.85em; color: #7f8c8d; margin-top: 15px; }
+        .calculation-steps { margin-top: 16px; padding: 12px; background: #ffffff; border: 1px solid #d7e6e3; border-radius: 6px; }
+        .calculation-steps h3 { margin: 0 0 8px; font-size: 1em; color: #2c3e50; }
+        .calculation-steps ol { margin: 0; padding-left: 20px; }
+        .calculation-steps li { margin-bottom: 6px; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -35,12 +39,20 @@
         <div class="result-item">１．公告日（起算日）: <br><span id="resAnnounce"></span></div>
         <div class="result-item">２．縦覧終了日（1月間・休日調整後）: <br><span id="resInspection"></span></div>
         <div class="result-item">３．意見書提出期限（終了日翌日から2週間）: <br><span id="resOpinion"></span></div>
-        <p class="note">※本ツールは民法第143条及び行政機関休日法に準拠しています。<br>※祝日データは外部API（holidays-jp）から取得しています。年末年始等の閉庁日は自治体により異なる場合があるため、実務上の最終確認は必ず行ってください。</p>
+        <div class="calculation-steps" id="calculationSteps">
+            <h3>計算工程</h3>
+            <ol id="resSteps"></ol>
+        </div>
+        <p class="note">※本ツールは民法第143条及び行政機関休日法に準拠しています。<br>※祝日データは外部API（holidays-jp）から取得しています。<br>※本ツールでは年末年始の12月29日〜1月3日を休日（閉庁日）として扱います。<br>※年末年始等の閉庁日は自治体により異なる場合があるため、実務上の最終確認は必ず行ってください。</p>
     </div>
 </div>
 
 <script>
     let holidays = {};
+    const YEAR_END_NEW_YEAR_HOLIDAYS = {
+        decemberStart: 29,
+        januaryEnd: 3
+    };
 
     // 祝日APIの非同期取得
     fetch('https://holidays-jp.github.io/api/v1/date.json')
@@ -48,14 +60,20 @@
         .then(data => { holidays = data; })
         .catch(error => console.error('祝日データの取得に失敗しました:', error));
 
-    // 休日判定関数（土・日・祝日）
+    // 休日判定関数（土・日・祝日・年末年始閉庁日）
     function isHoliday(dateObj) {
         const day = dateObj.getDay();
         if (day === 0 || day === 6) return true; // 日(0)・土(6)
+
+        const month = dateObj.getMonth() + 1;
+        const date = dateObj.getDate();
+        // 年末年始（12/29〜1/3）を閉庁日として扱う
+        if ((month === 12 && date >= YEAR_END_NEW_YEAR_HOLIDAYS.decemberStart) ||
+            (month === 1 && date <= YEAR_END_NEW_YEAR_HOLIDAYS.januaryEnd)) return true;
         
         const y = dateObj.getFullYear();
-        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const d = String(dateObj.getDate()).padStart(2, '0');
+        const m = String(month).padStart(2, '0');
+        const d = String(date).padStart(2, '0');
         const dateString = `${y}-${m}-${d}`;
         
         return holidays.hasOwnProperty(dateString);
@@ -75,6 +93,14 @@
         return new Intl.DateTimeFormat('ja-JP-u-ca-japanese', { 
             era: 'long', year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' 
         }).format(dateObj);
+    }
+
+
+    function formatDateISO(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dateObj.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
     }
 
     // 民法143条に基づく「1月後」の計算関数
@@ -130,6 +156,15 @@
         
         let finalOpinionEnd = getNextBusinessDay(rawOpinionEnd);
         document.getElementById('resOpinion').innerText = formatDateJP(finalOpinionEnd);
+
+        // 4. 計算工程の表示
+        const steps = [
+            `① 公告日（起算日）: ${formatDateISO(announceDate)}（${formatDateJP(announceDate)}）`,
+            `② 縦覧終了日（1月間）: ${formatDateISO(announceDate)} の「1月後の応当日前日」= ${formatDateISO(rawInspectionEnd)}。休日判定後 = ${formatDateISO(finalInspectionEnd)}（${formatDateJP(finalInspectionEnd)}）`,
+            `③ 意見書提出期限（2週間）: 縦覧終了日の翌日 ${formatDateISO(opinionStartDate)} を1日目として14日目 = ${formatDateISO(rawOpinionEnd)}。休日判定後 = ${formatDateISO(finalOpinionEnd)}（${formatDateJP(finalOpinionEnd)}）`,
+            `④ 休日調整ルール: 土日・祝日（holidays-jp）・年末年始（12/29〜1/3）を休日として、該当時は翌開庁日に繰り下げ`
+        ];
+        document.getElementById('resSteps').innerHTML = steps.map(step => `<li>${step}</li>`).join('');
 
         // 結果領域の表示
         document.getElementById('resultBox').style.display = 'block';
