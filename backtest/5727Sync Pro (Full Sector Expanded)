@@ -1,93 +1,198 @@
 //@version=6
-strategy(title="5727Sync Pro (Sector Expanded)", shorttitle="5727Pro_Exp",
+strategy(title="5727Sync Pro (Regime Adaptive)", shorttitle="5727Pro_RA",
      overlay=true, initial_capital=1000000, currency=currency.JPY,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
      commission_type=strategy.commission.percent, commission_value=0.05,
      pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true)
 
 //=============================================================================
-// 1. セクター・アセット選択システム
+// 1. トレードスタイル選択
 //=============================================================================
-groupSector = "🚀 投資対象・セクター選択"
+groupStyle = "トレードスタイル"
 
-// 改良点: 主要業種（半導体、海運、自動車、医薬品、電力、小売）を追加
-sectorInput = input.string("Mega Bank (メガバンク)", "ターゲットを選択", 
-     options=[
-         "Mega Bank (メガバンク)", "Regional Bank (地銀)", 
-         "Semicon (半導体)", "High Tech (ハイテク)", "Marine (海運)", 
-         "Automotive (自動車)", "Manufacturing (製造)", "Trading (商社)", 
-         "Pharma (医薬品)", "Retail (小売)", "Utility (電力/ガス)",
-         "Real Estate (不動産)", "Consulting (コンサル)", "Construction (建設)", 
-         "Transportation (運輸)", "Consumer (生活用品)", 
-         "ETH/JPY (イーサリアム)", "Resources (金/銀/資源)", 
-         "Index N225 (日経平均)", "Index NASDAQ", 
-         "Others (その他)", "Manual (手動)"
-     ], 
-     group=groupSector, tooltip="選択した資産クラスのボラティリティ特性に合わせて、内部ロジックが自動最適化されます。")
+styleInput = input.string("Swing (スイング)", "トレードスタイル",
+     options=["Short (短期)", "Swing (スイング)", "Mid (中期)", "Long (長期)"],
+     group=groupStyle,
+     tooltip="スタイルに合わせてEMA期間・ATR倍率・足種を自動設定します")
 
 //=============================================================================
-// 2. パラメーター設定
+// 2. バックテスト期間（初期値 2021/1/1）
 //=============================================================================
 groupTime = "バックテスト期間"
 useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
-startYear = input.int(2023,   "開始 年", group=groupTime)
-startMo   = input.int(1,      "開始 月", group=groupTime)
-startDy   = input.int(1,      "開始 日", group=groupTime)
-endYear   = input.int(2030,   "終了 年", group=groupTime)
-endMo     = input.int(12,     "終了 月", group=groupTime)
-endDy     = input.int(31,     "終了 日", group=groupTime)
+startYear = input.int(2021,   "開始 年", minval=2000, maxval=2030, group=groupTime)
+startMo   = input.int(1,      "開始 月", minval=1,    maxval=12,   group=groupTime)
+startDy   = input.int(1,      "開始 日", minval=1,    maxval=31,   group=groupTime)
+endYear   = input.int(2040,   "終了 年", minval=2000, maxval=2050, group=groupTime)
+endMo     = input.int(12,     "終了 月", minval=1,    maxval=12,   group=groupTime)
+endDy     = input.int(31,     "終了 日", minval=1,    maxval=31,   group=groupTime)
 
-// --- 手動設定用パラメーター ---
-groupMan    = "手動/その他用 設定"
-man_FastLen = input.int(12,  "EMA 短期", group=groupMan)
-man_SlowLen = input.int(26,  "EMA 長期", group=groupMan)
-man_AdxTh   = input.int(20,  "ADX 閾値", group=groupMan)
-man_SlMult  = input.float(2.0, "SL ATR倍率", step=0.1, group=groupMan)
-man_Tp1Mult = input.float(1.5, "TP1 ATR倍率", step=0.1, group=groupMan)
-
-//=============================================================================
-// 3. ロジック変数の自動マッピング (大幅拡充)
-//=============================================================================
-// [Fast, Slow, ADX_Th, SL_Mult, TP_Mult, Use_Vol]
-[p_fastLen, p_slowLen, p_adxTh, p_slMult, p_tp1Mult, p_useVol] = switch sectorInput
-    // --- 金融 ---
-    "Mega Bank (メガバンク)"    => [12, 26, 20, 2.0, 1.5, true]
-    "Regional Bank (地銀)"      => [14, 30, 18, 2.5, 1.8, false] // 板薄対応
-
-    // --- テック・高ボラティリティ ---
-    "Semicon (半導体)"          => [9,  21, 24, 2.5, 2.0, true]  // NEW: 高速反応・広めのストップ
-    "High Tech (ハイテク)"      => [9,  21, 23, 2.2, 1.2, true]
-    "ETH/JPY (イーサリアム)"    => [10, 20, 25, 3.5, 4.0, true]
-
-    // --- 景気敏感・輸出 ---
-    "Marine (海運)"             => [10, 25, 25, 3.0, 3.0, true]  // NEW: 超高ボラティリティ対応
-    "Automotive (自動車)"       => [13, 26, 20, 2.0, 1.5, true]  // NEW: 標準的だがトレンド重視
-    "Manufacturing (製造)"      => [13, 26, 18, 2.0, 1.5, true]
-    "Trading (商社)"            => [12, 26, 25, 2.0, 2.0, true]
-
-    // --- 内需・ディフェンシブ ---
-    "Pharma (医薬品)"           => [15, 30, 18, 1.8, 1.4, true]  // NEW: ダマシ回避のゆったり設定
-    "Retail (小売)"             => [12, 24, 20, 2.0, 1.5, false] // NEW: 出来高要件を緩和
-    "Utility (電力/ガス)"       => [15, 35, 18, 1.8, 1.2, true]  // NEW: 低ベータ・長期トレンド
-    "Real Estate (不動産)"      => [14, 30, 18, 2.0, 1.6, true]
-    "Construction (建設)"       => [15, 35, 18, 1.8, 1.2, true]
-    "Transportation (運輸)"     => [13, 28, 20, 2.2, 1.8, true]
-    "Consumer (生活用品)"       => [14, 30, 15, 1.8, 1.2, true]
-
-    // --- その他・指数 ---
-    "Consulting (コンサル)"     => [12, 25, 22, 2.3, 1.8, true]
-    "Resources (金/銀/資源)"    => [14, 28, 20, 2.0, 2.5, true]
-    "Index N225 (日経平均)"     => [12, 26, 20, 2.0, 1.5, true]
-    "Index NASDAQ"              => [10, 24, 22, 2.2, 2.0, true]
-    
-    // --- デフォルト ---
-    => [man_FastLen, man_SlowLen, man_AdxTh, man_SlMult, man_Tp1Mult, true] 
-
-// 期間判定
 inDateRange() =>
     not useDate or (time >= timestamp(syminfo.timezone, startYear, startMo, startDy, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMo, endDy, 23, 59))
 
 //=============================================================================
-// 4. インジケーター計算
+// 3. 手動微調整パラメーター
+//=============================================================================
+groupAdj = "感度微調整（上級者向け）"
+adj_coef   = input.float(0.0,  "係数オフセット",    minval=-0.5, maxval=0.5, step=0.05, group=groupAdj, tooltip="レジーム自動調整に加えて手動で微調整（+で敏感、-で鈍感）")
+adj_volReq = input.bool(true,  "出来高フィルター",  group=groupAdj)
+adj_rsiBase = input.int(50,    "RSI 基準値",        minval=30, maxval=65, group=groupAdj)
+
+//=============================================================================
+// 4. スタイル別 基本パラメーター自動マッピング
+//=============================================================================
+// EMA期間: simple int が必要なため switch 式で直接決定（レジーム調整の対象外）
+p_fastLen = switch styleInput
+    "Short (短期)"     => 8
+    "Swing (スイング)" => 12
+    "Mid (中期)"       => 20
+    "Long (長期)"      => 30
+    => 12
+
+p_slowLen = switch styleInput
+    "Short (短期)"     => 18
+    "Swing (スイング)" => 26
+    "Mid (中期)"       => 50
+    "Long (長期)"      => 75
+    => 26
+
+// ADX/SL/TP/トレール: レジームで動的調整するため var + switch で初期化
+var int   BASE_ADX   = 0
+var float BASE_SL    = 0.0
+var float BASE_TP    = 0.0
+var float BASE_TRAIL = 0.0
+
+switch styleInput
+    "Short (短期)" =>
+        BASE_ADX   := 22
+        BASE_SL    := 1.5
+        BASE_TP    := 1.2
+        BASE_TRAIL := 1.0
+    "Swing (スイング)" =>
+        BASE_ADX   := 20
+        BASE_SL    := 2.0
+        BASE_TP    := 1.5
+        BASE_TRAIL := 1.2
+    "Mid (中期)" =>
+        BASE_ADX   := 18
+        BASE_SL    := 2.5
+        BASE_TP    := 2.0
+        BASE_TRAIL := 1.5
+    "Long (長期)" =>
+        BASE_ADX   := 15
+        BASE_SL    := 3.0
+        BASE_TP    := 3.0
+        BASE_TRAIL := 1.8
+
+//=============================================================================
+// 5. 足の自動推奨（情報表示用）
+//    ※ Pine Script では足の切り替えは手動ですが、推奨足をダッシュボードに表示
+//=============================================================================
+recTimeframe = switch styleInput
+    "Short (短期)"     => "15分足 / 1時間足"
+    "Swing (スイング)" => "4時間足 / 日足"
+    "Mid (中期)"       => "日足 / 週足"
+    "Long (長期)"      => "週足 / 月足"
+    => "日足"
+
+// 現在の足が推奨範囲内かチェック
+tfMinutes = timeframe.in_seconds() / 60
+isTfOk = switch styleInput
+    "Short (短期)"     => tfMinutes >= 5    and tfMinutes <= 60
+    "Swing (スイング)" => tfMinutes >= 60   and tfMinutes <= 1440
+    "Mid (中期)"       => tfMinutes >= 1440 and tfMinutes <= 10080
+    "Long (長期)"      => tfMinutes >= 10080
+    => true
+
+//=============================================================================
+// 6. レジーム（相場環境）自動検出
+//    5つのレジーム: 暴落 / 下降 / 高ボラ / 上昇 / 通常
+//=============================================================================
+// --- レジーム検出用インジケーター ---
+_atr14      = ta.atr(14)
+_atrPct     = _atr14 / close * 100                     // ATR対価格比(%)
+_atrPctSma  = ta.sma(_atrPct, 20)                      // ATR%の平均
+_volRatio   = _atrPct / math.max(_atrPctSma, 0.001)    // ボラティリティ比率
+
+_sma50      = ta.sma(close, 50)
+_sma200     = ta.sma(close, 200)
+_roc20      = ta.roc(close, 20)                         // 20日変化率(%)
+
+// --- レジーム判定 ---
+// 暴落: 20日で-15%以上下落 かつ 高ボラ
+bool isCrash      = _roc20 < -15 and _volRatio > 1.5
+
+// 下降トレンド: 50MA < 200MA かつ 価格が50MA以下
+bool isDowntrend  = not isCrash and _sma50 < _sma200 and close < _sma50
+
+// 高ボラティリティ: ボラ比率が1.8倍以上（暴落でなければ）
+bool isHighVol    = not isCrash and not isDowntrend and _volRatio > 1.8
+
+// 上昇トレンド: 50MA > 200MA かつ 価格が50MA以上
+bool isUptrend    = not isCrash and not isDowntrend and not isHighVol and _sma50 > _sma200 and close > _sma50
+
+// 通常: 上記いずれにも該当しない
+bool isNormal     = not isCrash and not isDowntrend and not isHighVol and not isUptrend
+
+// --- レジーム名 ---
+regimeName = isCrash ? "CRASH" : isDowntrend ? "DOWN" : isHighVol ? "HIGH VOL" : isUptrend ? "UP TREND" : "NORMAL"
+
+//=============================================================================
+// 7. レジームに応じた係数・しきい値の自動調整
+//=============================================================================
+// 係数オフセット（レジーム自動 + 手動微調整）
+float regimeCoefAdj = 0.0
+float regimeAdxAdj  = 0.0
+float regimeRsiAdj  = 0.0
+float regimeSlAdj   = 0.0
+float regimeTpAdj   = 0.0
+
+if isCrash
+    // 暴落時: 係数+0.25、しきい値緩和 → シグナルが出やすくチャンスを拾う
+    regimeCoefAdj := 0.25
+    regimeAdxAdj  := -5.0      // ADX閾値を下げる（シグナル出やすく）
+    regimeRsiAdj  := -8.0      // RSI基準を下げる
+    regimeSlAdj   := 0.8       // SLを広げる（振り落とし防止）
+    regimeTpAdj   := 0.5       // TPも広げる（リバウンド幅大）
+
+else if isDowntrend
+    // 下降トレンド: 買いシグナルを厳しくフィルタリング
+    regimeCoefAdj := -0.15
+    regimeAdxAdj  := 3.0       // ADX閾値を上げる（強いトレンドのみ）
+    regimeRsiAdj  := 5.0       // RSI基準を上げる
+    regimeSlAdj   := 0.3       // SLやや広め
+    regimeTpAdj   := -0.2      // TPを狭く（早めの利確）
+
+else if isHighVol
+    // 高ボラ: 係数+0.15、SL広め
+    regimeCoefAdj := 0.15
+    regimeAdxAdj  := -2.0
+    regimeRsiAdj  := 0.0
+    regimeSlAdj   := 0.5
+    regimeTpAdj   := 0.3
+
+else if isUptrend
+    // 上昇トレンド: 係数-0.05、しきい値厳格化 → 高値掴み防止
+    regimeCoefAdj := -0.05
+    regimeAdxAdj  := 2.0       // ADX閾値を上げる
+    regimeRsiAdj  := 3.0       // RSI基準を上げる（過熱排除）
+    regimeSlAdj   := 0.0
+    regimeTpAdj   := 0.2       // TPやや広め（トレンドフォロー）
+
+// 通常時: 全て 0.0（基本値のまま）
+
+// --- 最終パラメーター計算 ---
+// EMA期間はセクション4で simple int として確定済み（レジーム調整の対象外）
+// ADX/RSI/SL/TP はレジームに応じて動的調整（手動オフセットも加算）
+float totalCoefAdj = regimeCoefAdj + adj_coef
+int   p_adxTh    = math.max(8, math.round(BASE_ADX + regimeAdxAdj - totalCoefAdj * 5))
+float p_slMult   = math.max(0.5, BASE_SL + regimeSlAdj)
+float p_tp1Mult  = math.max(0.3, BASE_TP + regimeTpAdj)
+float p_trail    = math.max(0.5, BASE_TRAIL)
+int   p_rsiFloor = math.max(30, math.round(adj_rsiBase + regimeRsiAdj))
+
+//=============================================================================
+// 8. インジケーター計算
 //=============================================================================
 price   = close
 emaFast = ta.ema(price, p_fastLen)
@@ -98,24 +203,31 @@ rsi     = ta.rsi(price, 14)
 [dp, dm, adx] = ta.dmi(14, 14)
 
 // 出来高フィルター
-volMa = ta.sma(volume, 20)
-volOk = not p_useVol or (volume > volMa)
+// 指数(N225,TOPIX等)や一部暗号資産は volume=0/na のためフィルター自動バイパス
+volMa       = ta.sma(volume, 20)
+bool hasVol = not na(volume) and volume > 0 and not na(volMa) and volMa > 0
+volOk       = (not adj_volReq) or (not hasVol) or (volume > volMa)
 
 //=============================================================================
-// 5. シグナル & トレード管理
+// 9. シグナル & トレード管理
 //=============================================================================
-trendUp = emaFast > emaSlow and price > emaFast 
-adxOk   = adx > p_adxTh
-rsiOk   = rsi > 50
-fireBuyRaw = trendUp and adxOk and rsiOk and volOk and inDateRange()
+trendUp    = emaFast > emaSlow and price > emaFast
+adxOk      = adx > p_adxTh
+rsiOk      = rsi > p_rsiFloor
 
-isLong = strategy.position_size > 0
+// 下降トレンド時は追加フィルター: MACDヒストグラム上昇中のみ許可
+[macdLine, signalLine, histLine] = ta.macd(price, 12, 26, 9)
+downFilter = isDowntrend ? (histLine > histLine[1]) : true
+
+fireBuyRaw = trendUp and adxOk and rsiOk and volOk and downFilter and inDateRange()
+
+isLong  = strategy.position_size > 0
 fireBuy = fireBuyRaw and not isLong
 
 // 変数管理
-var float entryPx   = na
-var float slPrice   = na
-var float tp1Price  = na
+var float entryPx     = na
+var float slPrice     = na
+var float tp1Price    = na
 var bool  tp1Executed = false
 
 if not isLong
@@ -123,60 +235,86 @@ if not isLong
 
 // エントリー
 if fireBuy
-    strategy.entry("BUY", strategy.long, comment= "Long")
-    entryPx   := close
-    slPrice   := close - (atr * p_slMult)
-    tp1Price  := close + (atr * p_tp1Mult)
+    strategy.entry("BUY", strategy.long, comment="Long")
+    entryPx     := close
+    slPrice     := close - (atr * p_slMult)
+    tp1Price    := close + (atr * p_tp1Mult)
     tp1Executed := false
 
 // エグジット & トレーリング
 if isLong
-    float proposedSL = high - (atr * p_slMult)
-    
-    // 改良点: 高ボラティリティ銘柄（半導体、海運）をアグレッシブトレール対象に追加
-    bool aggressiveTrail = (sectorInput == "ETH/JPY (イーサリアム)" or sectorInput == "High Tech (ハイテク)" or sectorInput == "Index NASDAQ" or sectorInput == "Consulting (コンサル)" or sectorInput == "Semicon (半導体)" or sectorInput == "Marine (海運)")
+    float proposedSL = high - (atr * p_slMult * p_trail)
 
     if tp1Executed
         slPrice := math.max(slPrice, proposedSL)
     else if close > tp1Price
-        float buffer = aggressiveTrail ? (atr * 0.5) : (atr * 0.1)
+        // 高ボラ/暴落レジームではアグレッシブなトレール
+        float buffer = (isHighVol or isCrash) ? (atr * 0.5) : (atr * 0.1)
         slPrice := math.max(slPrice, entryPx + buffer)
 
     // 部分利確 (50%)
     if not tp1Executed and high >= tp1Price
         strategy.exit("TP1", from_entry="BUY", qty_percent=50, limit=tp1Price, stop=slPrice, comment_profit="Lock")
         tp1Executed := true
-    
+
     // 全決済
     strategy.exit("Exit", from_entry="BUY", stop=slPrice, comment_loss="End")
 
 //=============================================================================
-// 6. 描画と情報表示
+// 10. 描画
 //=============================================================================
-plot(emaFast, "EMA Fast", color=color.teal, linewidth=2)
-plot(emaSlow, "EMA Slow", color=color.orange, linewidth=2)
-plot(isLong ? slPrice : na, "SL", color=color.red, style=plot.style_linebr, linewidth=2)
-plot(isLong and not tp1Executed ? tp1Price : na, "TP1", color=color.green, style=plot.style_circles, linewidth=1)
+plot(emaFast, "EMA Fast", color=color.teal,   linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.orange,  linewidth=2)
+plot(isLong ? slPrice : na,                    "SL",  color=color.red,   style=plot.style_linebr, linewidth=2)
+plot(isLong and not tp1Executed ? tp1Price : na,"TP1", color=color.green, style=plot.style_circles, linewidth=1)
 
+// トレンドゾーン背景色
 bgcolor(trendUp and adxOk ? color.new(color.green, 90) : na, title="Trend Zone")
 
-// ダッシュボード
-var table statusTable = table.new(position.bottom_right, 2, 6, border_width=1, frame_color=color.gray)
-if barstate.islast
-    // セクター表示（短縮表示）
-    table.cell(statusTable, 0, 0, "Target", bgcolor=color.new(color.blue, 30), text_color=color.white)
-    table.cell(statusTable, 1, 0, str.substring(sectorInput, 0, 15), bgcolor=color.black, text_color=color.white)
-    
-    // パラメーター値
-    table.cell(statusTable, 0, 1, "EMA / SL", bgcolor=color.gray)
-    table.cell(statusTable, 1, 1, str.tostring(p_fastLen) + "-" + str.tostring(p_slowLen) + " / x" + str.tostring(p_slMult), bgcolor=color.black, text_color=color.white)
-    
-    // ADX
-    table.cell(statusTable, 0, 2, "ADX (Th)", bgcolor=color.gray)
-    table.cell(statusTable, 1, 2, str.tostring(adx, "#.#") + " (" + str.tostring(p_adxTh) + ")", bgcolor=adx>p_adxTh ? color.green : color.black, text_color=color.white)
+// レジーム背景色（薄く表示）
+regimeColor = isCrash ? color.new(color.red, 85) : isDowntrend ? color.new(color.orange, 90) : isHighVol ? color.new(color.yellow, 90) : isUptrend ? color.new(color.blue, 93) : na
+bgcolor(regimeColor, title="Regime BG")
 
-    // 損益
+//=============================================================================
+// 11. ダッシュボード
+//=============================================================================
+var table dash = table.new(position.bottom_right, 2, 8, border_width=1, frame_color=color.gray)
+
+if barstate.islast
+    // Row 0: スタイル
+    table.cell(dash, 0, 0, "Style", bgcolor=color.new(color.blue, 30), text_color=color.white)
+    table.cell(dash, 1, 0, styleInput, bgcolor=color.black, text_color=color.white)
+
+    // Row 1: 推奨足
+    _tfBg = isTfOk ? color.new(color.green, 50) : color.new(color.red, 30)
+    table.cell(dash, 0, 1, "TF Rec", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 1, recTimeframe + (isTfOk ? " OK" : " !!"), bgcolor=_tfBg, text_color=color.white)
+
+    // Row 2: レジーム
+    _regBg = isCrash ? color.red : isDowntrend ? color.orange : isHighVol ? color.yellow : isUptrend ? color.teal : color.gray
+    table.cell(dash, 0, 2, "Regime", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 2, regimeName, bgcolor=_regBg, text_color=color.white)
+
+    // Row 3: EMA / SL
+    table.cell(dash, 0, 3, "EMA / SL", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(p_fastLen) + "-" + str.tostring(p_slowLen) + " / x" + str.tostring(p_slMult, "#.#"), bgcolor=color.black, text_color=color.white)
+
+    // Row 4: ADX
+    table.cell(dash, 0, 4, "ADX (Th)", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(adx, "#.#") + " (" + str.tostring(p_adxTh) + ")", bgcolor=adx > p_adxTh ? color.green : color.black, text_color=color.white)
+
+    // Row 5: RSI
+    table.cell(dash, 0, 5, "RSI (Fl)", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(rsi, "#.#") + " (" + str.tostring(p_rsiFloor) + ")", bgcolor=rsi > p_rsiFloor ? color.green : color.black, text_color=color.white)
+
+    // Row 6: VolRatio（出来高なし銘柄は "N/A" 表示）
+    table.cell(dash, 0, 6, "VolRatio", bgcolor=color.gray, text_color=color.white)
+    _volText = hasVol ? str.tostring(_volRatio, "#.##") : "N/A (bypass)"
+    _volBg   = not hasVol ? color.new(color.purple, 50) : _volRatio > 1.5 ? color.orange : color.black
+    table.cell(dash, 1, 6, _volText, bgcolor=_volBg, text_color=color.white)
+
+    // Row 7: PnL
     pnlPct = isLong ? (close - entryPx) / entryPx * 100 : 0.0
     c_pnl  = pnlPct > 0 ? color.teal : pnlPct < 0 ? color.red : color.gray
-    table.cell(statusTable, 0, 3, "PnL %", bgcolor=color.gray)
-    table.cell(statusTable, 1, 3, str.tostring(pnlPct, "#.##") + "%", bgcolor=c_pnl, text_color=color.white)
+    table.cell(dash, 0, 7, "PnL %", bgcolor=color.gray, text_color=color.white)
+    table.cell(dash, 1, 7, str.tostring(pnlPct, "#.##") + "%", bgcolor=c_pnl, text_color=color.white)
