@@ -1,6 +1,7 @@
 //@version=6
 strategy(title="5727Sync Pro (Regime Adaptive)", shorttitle="5727Pro_RA",
      overlay=true, initial_capital=1000000, currency=currency.JPY,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
      commission_type=strategy.commission.percent, commission_value=0.05,
      pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true)
 
