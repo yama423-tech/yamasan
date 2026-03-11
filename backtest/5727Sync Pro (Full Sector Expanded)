@@ -23,7 +23,7 @@ useDate   = input.bool(true,  "期間指定を有効にする", group=groupTime)
 startYear = input.int(2021,   "開始 年", minval=2000, maxval=2030, group=groupTime)
 startMo   = input.int(1,      "開始 月", minval=1,    maxval=12,   group=groupTime)
 startDy   = input.int(1,      "開始 日", minval=1,    maxval=31,   group=groupTime)
-endYear   = input.int(2030,   "終了 年", minval=2000, maxval=2040, group=groupTime)
+endYear   = input.int(2040,   "終了 年", minval=2000, maxval=2050, group=groupTime)
 endMo     = input.int(12,     "終了 月", minval=1,    maxval=12,   group=groupTime)
 endDy     = input.int(31,     "終了 日", minval=1,    maxval=31,   group=groupTime)
 
