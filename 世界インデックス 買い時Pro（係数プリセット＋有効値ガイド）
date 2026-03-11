@@ -268,7 +268,7 @@ plot(volRatio, title="ボラ倍率", display=display.data_window)
 if showGuide
     var table g = table.new(position.top_right, 2, 14, frame_color=color.gray, border_width=1)
 
-    regimeColor = isCrashing ? color.red : isBearish ? color.orange : isHighVol ? color.yellow : isUptrend ? color.lime : color.gray
+    regimeColor = isCrashing ? color.red : isBearish ? color.orange : isHighVol ? color.new(color.orange, 30) : isUptrend ? color.lime : color.gray
 
     if barstate.islast
         // ヘッダ列（左）
