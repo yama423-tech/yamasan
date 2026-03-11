@@ -40,44 +40,48 @@ adj_rsiBase = input.int(50,    "RSI 基準値",        minval=30, maxval=65, gro
 //=============================================================================
 // 4. スタイル別 基本パラメーター自動マッピング
 //=============================================================================
-// [FastEMA, SlowEMA, ADX閾値, SL_ATR倍率, TP1_ATR倍率, トレール係数]
-var int   BASE_FAST    = 0
-var int   BASE_SLOW    = 0
-var int   BASE_ADX     = 0
-var float BASE_SL      = 0.0
-var float BASE_TP      = 0.0
-var float BASE_TRAIL   = 0.0
+// EMA期間: simple int が必要なため switch 式で直接決定（レジーム調整の対象外）
+p_fastLen = switch styleInput
+    "Short (短期)"     => 8
+    "Swing (スイング)" => 12
+    "Mid (中期)"       => 20
+    "Long (長期)"      => 30
+    => 12
 
-// スタイル別に基本値を設定
+p_slowLen = switch styleInput
+    "Short (短期)"     => 18
+    "Swing (スイング)" => 26
+    "Mid (中期)"       => 50
+    "Long (長期)"      => 75
+    => 26
+
+// ADX/SL/TP/トレール: レジームで動的調整するため var + switch で初期化
+var int   BASE_ADX   = 0
+var float BASE_SL    = 0.0
+var float BASE_TP    = 0.0
+var float BASE_TRAIL = 0.0
+
 switch styleInput
     "Short (短期)" =>
-        BASE_FAST    := 8
-        BASE_SLOW    := 18
-        BASE_ADX     := 22
-        BASE_SL      := 1.5
-        BASE_TP      := 1.2
-        BASE_TRAIL   := 1.0
+        BASE_ADX   := 22
+        BASE_SL    := 1.5
+        BASE_TP    := 1.2
+        BASE_TRAIL := 1.0
     "Swing (スイング)" =>
-        BASE_FAST    := 12
-        BASE_SLOW    := 26
-        BASE_ADX     := 20
-        BASE_SL      := 2.0
-        BASE_TP      := 1.5
-        BASE_TRAIL   := 1.2
+        BASE_ADX   := 20
+        BASE_SL    := 2.0
+        BASE_TP    := 1.5
+        BASE_TRAIL := 1.2
     "Mid (中期)" =>
-        BASE_FAST    := 20
-        BASE_SLOW    := 50
-        BASE_ADX     := 18
-        BASE_SL      := 2.5
-        BASE_TP      := 2.0
-        BASE_TRAIL   := 1.5
+        BASE_ADX   := 18
+        BASE_SL    := 2.5
+        BASE_TP    := 2.0
+        BASE_TRAIL := 1.5
     "Long (長期)" =>
-        BASE_FAST    := 30
-        BASE_SLOW    := 75
-        BASE_ADX     := 15
-        BASE_SL      := 3.0
-        BASE_TP      := 3.0
-        BASE_TRAIL   := 1.8
+        BASE_ADX   := 15
+        BASE_SL    := 3.0
+        BASE_TP    := 3.0
+        BASE_TRAIL := 1.8
 
 //=============================================================================
 // 5. 足の自動推奨（情報表示用）
@@ -177,11 +181,10 @@ else if isUptrend
 // 通常時: 全て 0.0（基本値のまま）
 
 // --- 最終パラメーター計算 ---
+// EMA期間はセクション4で simple int として確定済み（レジーム調整の対象外）
+// ADX/RSI/SL/TP はレジームに応じて動的調整（手動オフセットも加算）
 float totalCoefAdj = regimeCoefAdj + adj_coef
-
-int   p_fastLen  = math.max(3, math.round(BASE_FAST * (1.0 - totalCoefAdj * 0.3)))
-int   p_slowLen  = math.max(p_fastLen + 5, math.round(BASE_SLOW * (1.0 - totalCoefAdj * 0.2)))
-int   p_adxTh    = math.max(8, math.round(BASE_ADX + regimeAdxAdj))
+int   p_adxTh    = math.max(8, math.round(BASE_ADX + regimeAdxAdj - totalCoefAdj * 5))
 float p_slMult   = math.max(0.5, BASE_SL + regimeSlAdj)
 float p_tp1Mult  = math.max(0.3, BASE_TP + regimeTpAdj)
 float p_trail    = math.max(0.5, BASE_TRAIL)
