@@ -3,439 +3,783 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web FFT アナライザー</title>
+    <title>固有振動数アナライザー — 打音試験</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+        :root {
+            --bg:      #0f1117;
+            --surface: #1a1d27;
+            --border:  #2a2d3d;
+            --accent:  #5a6aff;
+            --text:    #e0e0e0;
+            --muted:   #888;
+        }
+
         body {
             font-family: 'Segoe UI', system-ui, sans-serif;
-            background: #0f1117;
-            color: #e0e0e0;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             padding: 24px 16px;
         }
 
-        .container {
-            max-width: 860px;
-            margin: auto;
-        }
+        .container { max-width: 920px; margin: auto; }
 
-        header {
-            margin-bottom: 28px;
-        }
+        header { margin-bottom: 24px; }
+        header h1 { font-size: 1.5rem; font-weight: 700; color: #fff; }
+        header .subtitle { margin-top: 8px; font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
 
-        header h1 {
-            font-size: 1.6rem;
-            font-weight: 700;
-            color: #fff;
-            letter-spacing: -0.02em;
-        }
-
-        header p {
-            margin-top: 6px;
-            font-size: 0.875rem;
-            color: #888;
-            line-height: 1.6;
-        }
-
-        /* ─── カード ─── */
+        /* ── カード ── */
         .card {
-            background: #1a1d27;
-            border: 1px solid #2a2d3d;
+            background: var(--surface);
+            border: 1px solid var(--border);
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 20px;
         }
 
         .card-title {
-            font-size: 0.75rem;
-            font-weight: 600;
+            font-size: 0.72rem;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: #5a6aff;
-            margin-bottom: 14px;
+            letter-spacing: 0.1em;
+            color: var(--accent);
+            margin-bottom: 16px;
         }
 
-        /* ─── プリセット ─── */
-        .presets {
+        /* ── サンプルグリッド ── */
+        .sample-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+        }
+
+        .sample-btn {
             display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 14px;
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 12px 14px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-align: left;
+            color: var(--text);
         }
 
-        .preset-btn {
-            padding: 5px 14px;
-            font-size: 0.8rem;
-            border: 1px solid #3a3d55;
-            border-radius: 20px;
-            background: transparent;
-            color: #aaa;
+        .sample-btn:hover   { border-color: var(--accent); background: rgba(90,106,255,0.06); }
+        .sample-btn.active  { border-color: var(--accent); background: rgba(90,106,255,0.12); }
+        .sample-btn .s-dot  { width: 8px; height: 8px; border-radius: 50%; margin-bottom: 6px; }
+        .sample-btn .s-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 3px; }
+        .sample-btn .s-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
+
+        .sample-controls { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+        /* ── ドロップゾーン ── */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 32px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(90,106,255,0.05);
+            color: var(--text);
+        }
+
+        .drop-zone .drop-icon { font-size: 2rem; margin-bottom: 8px; }
+
+        /* ── コントロール ── */
+        .controls-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            margin-top: 14px;
+        }
+
+        .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+        .ctrl-group label { font-size: 0.72rem; color: var(--muted); }
+
+        select, input[type="number"] {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.83rem;
+            padding: 6px 10px;
+            outline: none;
+        }
+
+        select:focus { border-color: var(--accent); }
+
+        /* ── ボタン ── */
+        .btn {
+            padding: 7px 18px;
+            border: none;
+            border-radius: 7px;
+            font-size: 0.85rem;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.15s;
         }
 
-        .preset-btn:hover {
-            border-color: #5a6aff;
-            color: #fff;
-            background: rgba(90,106,255,0.1);
-        }
+        .btn-primary   { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: #6e7dff; }
+        .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+        .btn:active    { transform: scale(0.97); }
+        .btn:disabled  { opacity: 0.38; cursor: default; transform: none; }
 
-        /* ─── テキストエリア ─── */
-        textarea {
-            width: 100%;
-            height: 80px;
-            background: #0f1117;
-            border: 1px solid #2a2d3d;
-            border-radius: 8px;
-            color: #e0e0e0;
-            font-family: 'Fira Code', monospace;
-            font-size: 0.85rem;
-            padding: 10px 12px;
-            resize: vertical;
-            outline: none;
-            transition: border-color 0.2s;
-        }
+        /* ── 波形 ── */
+        #waveformCanvas { width: 100%; border-radius: 6px; cursor: crosshair; display: block; }
+        .waveform-info  { font-size: 0.75rem; color: var(--muted); margin-top: 8px; }
 
-        textarea:focus {
-            border-color: #5a6aff;
-        }
+        /* ── スペクトル ── */
+        #spectrumCanvas { width: 100%; border-radius: 6px; display: block; cursor: crosshair; }
 
-        /* ─── オプション行 ─── */
-        .options-row {
-            display: flex;
-            gap: 16px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-            align-items: flex-end;
-        }
+        /* ── 音声情報 ── */
+        .audio-info { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; }
+        .audio-info-item .label { font-size: 0.75rem; color: var(--muted); margin-right: 4px; }
+        .audio-info-item .val   { font-size: 0.85rem; font-weight: 600; }
 
-        .option-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .option-group label {
-            font-size: 0.75rem;
-            color: #888;
-        }
-
-        select, input[type="number"] {
-            background: #0f1117;
-            border: 1px solid #2a2d3d;
-            border-radius: 6px;
-            color: #e0e0e0;
-            font-size: 0.85rem;
-            padding: 6px 10px;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-
-        select:focus, input[type="number"]:focus {
-            border-color: #5a6aff;
-        }
-
-        .run-btn {
-            margin-left: auto;
-            padding: 8px 28px;
-            background: #5a6aff;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.15s, transform 0.1s;
-        }
-
-        .run-btn:hover  { background: #6e7dff; }
-        .run-btn:active { transform: scale(0.97); }
-
-        /* ─── エラーメッセージ ─── */
-        .error-msg {
-            display: none;
-            color: #ff6b6b;
-            font-size: 0.8rem;
-            margin-top: 8px;
-        }
-
-        /* ─── Canvas チャート ─── */
-        #chartCanvas {
-            width: 100%;
-            border-radius: 8px;
-            display: block;
-            cursor: crosshair;
-        }
-
-        /* ─── 統計テーブル ─── */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
-        }
-
-        .stat-box {
-            background: #0f1117;
-            border: 1px solid #2a2d3d;
-            border-radius: 8px;
-            padding: 12px 14px;
-        }
-
-        .stat-label {
+        /* ── 結果テーブル ── */
+        .freq-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .freq-table th {
+            text-align: left;
+            padding: 8px 12px;
+            color: var(--muted);
             font-size: 0.72rem;
-            color: #888;
-            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .freq-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid rgba(42,45,61,0.5);
+        }
+        .freq-table tr:last-child td { border-bottom: none; }
+
+        .rank-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px; border-radius: 50%;
+            font-size: 0.72rem; font-weight: 700;
         }
 
-        .stat-value {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #fff;
-            font-variant-numeric: tabular-nums;
+        .material-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.72rem;
         }
 
-        /* ─── ピーク一覧 ─── */
-        .peak-list {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            max-height: 180px;
-            overflow-y: auto;
-        }
+        /* ── 参考テーブル ── */
+        .ref-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .ref-table th, .ref-table td { padding: 7px 12px; border-bottom: 1px solid rgba(42,45,61,0.5); }
+        .ref-table th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; }
+        .ref-table tr:last-child td { border-bottom: none; }
 
-        .peak-item {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8rem;
-            padding: 6px 10px;
-            background: #0f1117;
-            border-radius: 6px;
-            border-left: 3px solid;
-        }
-
-        .peak-item .freq { color: #aaa; }
-        .peak-item .amp  { font-weight: 600; color: #fff; }
-
-        /* ─── ツールチップ ─── */
+        /* ── ツールチップ ── */
         #tooltip {
             position: fixed;
-            background: rgba(15,17,23,0.92);
-            border: 1px solid #3a3d55;
+            background: rgba(15,17,23,0.95);
+            border: 1px solid var(--border);
             border-radius: 6px;
             padding: 6px 10px;
             font-size: 0.78rem;
-            color: #e0e0e0;
             pointer-events: none;
             display: none;
             z-index: 100;
         }
+
+        /* ── ステータスバー ── */
+        .status-bar         { font-size: 0.78rem; color: var(--muted); margin-top: 10px; min-height: 1.2em; }
+        .status-bar.error   { color: #ff6b6b; }
+        .status-bar.success { color: #06d6a0; }
     </style>
 </head>
 <body>
 <div class="container">
+
     <header>
-        <h1>Web FFT アナライザー</h1>
-        <p>時系列信号データをカンマ区切りで入力し、振幅スペクトルを可視化します。<br>
-           データ数が 2 の累乗でない場合は自動でゼロ詰め（ゼロパディング）されます。</p>
+        <h1>固有振動数アナライザー — 打音試験</h1>
+        <p class="subtitle">
+            木材・コンクリートなどをハンマーで叩いて録音した音声（MP3 / WAV / OGG）を読み込み、<br>
+            FFT 解析により固有振動数を算出します。下記のサンプル音源で動作を確認できます。
+        </p>
     </header>
 
-    <!-- 入力カード -->
+    <!-- ── サンプル音源 ── -->
     <div class="card">
-        <div class="card-title">入力データ</div>
-
-        <div class="presets">
-            <button class="preset-btn" onclick="loadPreset('sine')">正弦波 1 Hz</button>
-            <button class="preset-btn" onclick="loadPreset('multi')">多周波数合成</button>
-            <button class="preset-btn" onclick="loadPreset('square')">矩形波</button>
-            <button class="preset-btn" onclick="loadPreset('noise')">ホワイトノイズ</button>
-            <button class="preset-btn" onclick="loadPreset('chirp')">チャープ信号</button>
+        <div class="card-title">実験用サンプル音源（合成シミュレーション）</div>
+        <div class="sample-grid" id="sampleGrid"></div>
+        <div class="sample-controls">
+            <button class="btn btn-primary"   id="btnPlaySample" disabled onclick="playSample()">▶ 再生</button>
+            <button class="btn btn-secondary" id="btnLoadSample" disabled onclick="loadSample()">このサンプルを解析する</button>
+            <button class="btn btn-secondary" id="btnStopSample" disabled onclick="stopPlayback()">■ 停止</button>
         </div>
+        <div class="status-bar" id="sampleStatus"></div>
+    </div>
 
-        <textarea id="inputData" placeholder="例: 1, 0.707, 0, -0.707, -1, -0.707, 0, 0.707">1, 0.707, 0, -0.707, -1, -0.707, 0, 0.707</textarea>
-        <div class="error-msg" id="errorMsg"></div>
+    <!-- ── ファイルアップロード ── -->
+    <div class="card">
+        <div class="card-title">録音ファイル読み込み</div>
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <div class="drop-icon">🎙</div>
+            <div>MP3 / WAV / OGG / M4A をドラッグ&ドロップ、またはクリックして選択</div>
+            <div style="font-size:0.78rem;margin-top:6px;color:#555">ハンマーで叩いた際の打音ファイルを読み込んでください</div>
+        </div>
+        <input type="file" id="fileInput" accept="audio/*" style="display:none" onchange="handleFile(this.files[0])">
+        <div class="status-bar" id="fileStatus"></div>
+    </div>
 
-        <div class="options-row">
-            <div class="option-group">
+    <!-- ── 波形表示 ── -->
+    <div class="card" id="waveformCard" style="display:none">
+        <div class="card-title">波形 ／ 解析ウィンドウ選択</div>
+        <div class="audio-info" id="audioInfo"></div>
+        <canvas id="waveformCanvas" height="120"></canvas>
+        <div class="waveform-info" id="waveformInfo">
+            波形上をクリックして解析開始位置を設定（オレンジ色の範囲が FFT ウィンドウです）
+        </div>
+        <div class="controls-row">
+            <div class="ctrl-group">
+                <label>FFT サイズ</label>
+                <select id="fftSize">
+                    <option value="1024">1024 点</option>
+                    <option value="2048">2048 点</option>
+                    <option value="4096" selected>4096 点</option>
+                    <option value="8192">8192 点</option>
+                    <option value="16384">16384 点</option>
+                </select>
+            </div>
+            <div class="ctrl-group">
                 <label>窓関数</label>
-                <select id="windowFunc">
-                    <option value="rect">矩形（なし）</option>
+                <select id="waveWindowFunc">
                     <option value="hann" selected>ハニング</option>
                     <option value="hamming">ハミング</option>
                     <option value="blackman">ブラックマン</option>
+                    <option value="rect">矩形（なし）</option>
                 </select>
             </div>
-            <div class="option-group">
-                <label>サンプリング周波数 (Hz)</label>
-                <input type="number" id="sampleRate" value="8" min="1" max="192000" step="1">
+            <div class="ctrl-group">
+                <label>周波数上限 (Hz)</label>
+                <input type="number" id="freqMax" value="5000" min="100" max="22050" step="100">
             </div>
-            <div class="option-group">
-                <label>スケール</label>
-                <select id="scaleType">
-                    <option value="linear">リニア</option>
-                    <option value="db">dB（対数）</option>
-                </select>
-            </div>
-            <button class="run-btn" onclick="runFFT()">解析実行</button>
+            <button class="btn btn-secondary" onclick="autoDetect()">⚡ 打撃点自動検出</button>
+            <button class="btn btn-primary"   onclick="analyzeAudio()">解析実行</button>
         </div>
     </div>
 
-    <!-- チャートカード -->
-    <div class="card">
+    <!-- ── スペクトル ── -->
+    <div class="card" id="spectrumCard" style="display:none">
         <div class="card-title">振幅スペクトル</div>
-        <canvas id="chartCanvas" height="240"></canvas>
+        <canvas id="spectrumCanvas" height="240"></canvas>
     </div>
 
-    <!-- 統計カード -->
-    <div class="card" id="statsCard" style="display:none">
-        <div class="card-title">解析サマリー</div>
-        <div class="stats-grid" id="statsGrid"></div>
+    <!-- ── 固有振動数 結果 ── -->
+    <div class="card" id="resultsCard" style="display:none">
+        <div class="card-title">固有振動数 ─ 検出結果</div>
+        <table class="freq-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>周波数 (Hz)</th>
+                    <th>相対振幅</th>
+                    <th>材料カテゴリ（参考）</th>
+                </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+        </table>
     </div>
 
-    <!-- ピーク一覧カード -->
-    <div class="card" id="peaksCard" style="display:none">
-        <div class="card-title">検出ピーク（上位 5 成分）</div>
-        <div class="peak-list" id="peakList"></div>
+    <!-- ── 参考テーブル ── -->
+    <div class="card">
+        <div class="card-title">材料別 固有振動数 参考値</div>
+        <table class="ref-table">
+            <thead><tr><th>材料</th><th>代表的な固有振動数</th><th>特徴</th></tr></thead>
+            <tbody>
+                <tr><td>木材（針葉樹 板材）</td><td>100 – 500 Hz</td><td>低め・残響が長い・倍音豊か</td></tr>
+                <tr><td>木材（広葉樹・合板）</td><td>300 – 1,500 Hz</td><td>やや高め・減衰やや早い</td></tr>
+                <tr><td>コンクリートブロック</td><td>800 – 3,000 Hz</td><td>高め・短い残響・鈍い打音</td></tr>
+                <tr><td>鉄筋コンクリート</td><td>500 – 2,000 Hz</td><td>複数モード・寸法・密度依存</td></tr>
+                <tr><td>セラミック・磁器タイル</td><td>2,000 – 8,000 Hz</td><td>非常に高い・鋭い単峰</td></tr>
+                <tr><td>金属板</td><td>1,000 – 10,000 Hz+</td><td>非常に高い・長く鳴り続ける</td></tr>
+            </tbody>
+        </table>
     </div>
+
 </div>
 
 <div id="tooltip"></div>
 
 <script>
-/* =========================================================
-   FFT（クーリー–テューキー 再帰版）
-   ========================================================= */
-function fft(real, imag) {
-    const n = real.length;
-    if (n <= 1) return { real, imag };
+/* ============================================================
+   グローバル状態
+   ============================================================ */
+let audioCtx        = null;
+let audioBuffer     = null;
+let winStartSample  = 0;
+let selectedId      = null;
+let currentSource   = null;
+const sampleBuffers = {};
 
-    const eR = [], eI = [], oR = [], oI = [];
-    for (let i = 0; i < n / 2; i++) {
-        eR.push(real[i * 2]);     eI.push(imag[i * 2]);
-        oR.push(real[i * 2 + 1]); oI.push(imag[i * 2 + 1]);
+/* ============================================================
+   サンプル定義
+   5 種類の材料ごとに固有モード（周波数・振幅・減衰時定数）を設定
+   ============================================================ */
+const SAMPLE_DEFS = [
+    {
+        id: 'cedar',
+        name: '杉板（薄板）',
+        desc: '120×30mm 杉板・中央打撃',
+        color: '#C4852A',
+        duration: 1.2,
+        modes: [
+            { freq: 278, amp: 1.00, tau: 0.360 },
+            { freq: 556, amp: 0.38, tau: 0.220 },
+            { freq: 834, amp: 0.17, tau: 0.140 },
+            { freq: 1112, amp: 0.08, tau: 0.090 },
+        ],
+    },
+    {
+        id: 'plywood',
+        name: '合板（ラワン 12mm）',
+        desc: '12mm 厚 ラワン合板',
+        color: '#D4A96A',
+        duration: 1.0,
+        modes: [
+            { freq: 372, amp: 0.70, tau: 0.260 },
+            { freq: 448, amp: 1.00, tau: 0.280 },
+            { freq: 896, amp: 0.33, tau: 0.160 },
+            { freq: 1344, amp: 0.14, tau: 0.100 },
+        ],
+    },
+    {
+        id: 'concrete_block',
+        name: 'コンクリートブロック',
+        desc: 'JIS A 5406 普通ブロック',
+        color: '#9A9A9A',
+        duration: 0.6,
+        modes: [
+            { freq: 963,  amp: 0.62, tau: 0.090 },
+            { freq: 1248, amp: 1.00, tau: 0.110 },
+            { freq: 2496, amp: 0.27, tau: 0.058 },
+            { freq: 3744, amp: 0.11, tau: 0.038 },
+        ],
+    },
+    {
+        id: 'rc_column',
+        name: '鉄筋コンクリート柱',
+        desc: '200×200mm RC 供試体（模擬打音試験）',
+        color: '#B0B0C0',
+        duration: 0.8,
+        modes: [
+            { freq: 538,  amp: 0.65, tau: 0.135 },
+            { freq: 744,  amp: 1.00, tau: 0.175 },
+            { freq: 1488, amp: 0.43, tau: 0.100 },
+            { freq: 2232, amp: 0.19, tau: 0.062 },
+            { freq: 2976, amp: 0.09, tau: 0.040 },
+        ],
+    },
+    {
+        id: 'ceramic',
+        name: 'セラミックタイル',
+        desc: '300×300mm 磁器質床タイル・打撃',
+        color: '#E8D4B8',
+        duration: 0.35,
+        modes: [
+            { freq: 2876, amp: 0.68, tau: 0.048 },
+            { freq: 3824, amp: 1.00, tau: 0.055 },
+            { freq: 5512, amp: 0.37, tau: 0.032 },
+            { freq: 7648, amp: 0.17, tau: 0.022 },
+        ],
+    },
+];
+
+/* ============================================================
+   AudioContext の遅延初期化
+   ============================================================ */
+function ensureCtx() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        buildSamples();
     }
-
-    const even = fft(eR, eI);
-    const odd  = fft(oR, oI);
-
-    const rR = new Array(n), rI = new Array(n);
-    for (let k = 0; k < n / 2; k++) {
-        const angle = -2 * Math.PI * k / n;
-        const wR = Math.cos(angle), wI = Math.sin(angle);
-        const tR = wR * odd.real[k] - wI * odd.imag[k];
-        const tI = wR * odd.imag[k] + wI * odd.real[k];
-
-        rR[k]         = even.real[k] + tR;
-        rI[k]         = even.imag[k] + tI;
-        rR[k + n / 2] = even.real[k] - tR;
-        rI[k + n / 2] = even.imag[k] - tI;
-    }
-    return { real: rR, imag: rI };
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
 }
 
-/* =========================================================
+/* ============================================================
+   サンプル音源合成（Web Audio API を使って AudioBuffer を生成）
+   打撃瞬時ノイズ + 各共振モードの減衰振動
+   ============================================================ */
+function buildSamples() {
+    const sr = audioCtx.sampleRate;
+    for (const def of SAMPLE_DEFS) {
+        const n   = Math.ceil(sr * def.duration);
+        const buf = audioCtx.createBuffer(1, n, sr);
+        const d   = buf.getChannelData(0);
+
+        for (let i = 0; i < n; i++) {
+            const t = i / sr;
+            let s = 0;
+            // 打撃瞬時ノイズ（極短パルス）
+            if (t < 0.004) s += (Math.random() * 2 - 1) * Math.exp(-t * 3500) * 0.6;
+            // 各共振モード
+            for (const m of def.modes) {
+                s += m.amp * Math.sin(2 * Math.PI * m.freq * t) * Math.exp(-t / m.tau);
+            }
+            d[i] = s;
+        }
+
+        // ピーク正規化
+        let mx = 1e-10;
+        for (let i = 0; i < n; i++) if (Math.abs(d[i]) > mx) mx = Math.abs(d[i]);
+        for (let i = 0; i < n; i++) d[i] /= mx;
+
+        sampleBuffers[def.id] = buf;
+    }
+}
+
+/* ============================================================
+   サンプル UI 構築
+   ============================================================ */
+function buildSampleUI() {
+    const grid = document.getElementById('sampleGrid');
+    for (const def of SAMPLE_DEFS) {
+        const btn = document.createElement('button');
+        btn.className = 'sample-btn';
+        btn.id = 'sb_' + def.id;
+        btn.innerHTML = `
+            <div class="s-dot" style="background:${def.color}"></div>
+            <div class="s-name">${def.name}</div>
+            <div class="s-desc">${def.desc}</div>
+        `;
+        btn.onclick = () => selectSample(def.id);
+        grid.appendChild(btn);
+    }
+}
+
+function selectSample(id) {
+    ensureCtx();
+    selectedId = id;
+    document.querySelectorAll('.sample-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('sb_' + id).classList.add('active');
+    document.getElementById('btnPlaySample').disabled = false;
+    document.getElementById('btnLoadSample').disabled = false;
+    const def = SAMPLE_DEFS.find(d => d.id === id);
+    setStatus('sampleStatus', `「${def.name}」を選択 — ▶ 再生 または このサンプルを解析する をクリック`);
+}
+
+function playSample() {
+    if (!selectedId) return;
+    ensureCtx();
+    stopPlayback();
+    currentSource = audioCtx.createBufferSource();
+    currentSource.buffer = sampleBuffers[selectedId];
+    currentSource.connect(audioCtx.destination);
+    currentSource.start();
+    document.getElementById('btnStopSample').disabled = false;
+    currentSource.onended = () => { document.getElementById('btnStopSample').disabled = true; };
+}
+
+function stopPlayback() {
+    if (currentSource) { try { currentSource.stop(); } catch {} currentSource = null; }
+    document.getElementById('btnStopSample').disabled = true;
+}
+
+function loadSample() {
+    if (!selectedId) return;
+    ensureCtx();
+    audioBuffer    = sampleBuffers[selectedId];
+    winStartSample = 0;
+    const def = SAMPLE_DEFS.find(d => d.id === selectedId);
+    showAudioInfo(`${def.name}（合成サンプル）`);
+    drawWaveform();
+    autoDetect();
+    setStatus('sampleStatus', `「${def.name}」を読み込みました。解析実行ボタンを押してください。`, 'success');
+}
+
+/* ============================================================
+   ファイル読み込み
+   ============================================================ */
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop',      e  => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+    if (!file) return;
+    setStatus('fileStatus', `読み込み中: ${file.name} ...`);
+    ensureCtx();
+    const reader = new FileReader();
+    reader.onload = e => {
+        audioCtx.decodeAudioData(e.target.result.slice(0), buf => {
+            audioBuffer    = buf;
+            winStartSample = 0;
+            showAudioInfo(file.name);
+            drawWaveform();
+            autoDetect();
+            setStatus('fileStatus', `✔ ${file.name} を読み込みました`, 'success');
+        }, err => {
+            setStatus('fileStatus', `デコードエラー: ${err?.message || err}`, 'error');
+        });
+    };
+    reader.onerror = () => setStatus('fileStatus', 'ファイル読み込みエラー', 'error');
+    reader.readAsArrayBuffer(file);
+}
+
+/* ============================================================
+   音声情報バー
+   ============================================================ */
+function showAudioInfo(name) {
+    document.getElementById('waveformCard').style.display = '';
+    const b = audioBuffer;
+    document.getElementById('audioInfo').innerHTML = [
+        ['ファイル',           name],
+        ['再生時間',           b.duration.toFixed(3) + ' 秒'],
+        ['サンプリングレート', b.sampleRate.toLocaleString() + ' Hz'],
+        ['チャンネル',         b.numberOfChannels + ' ch'],
+        ['総サンプル数',       b.length.toLocaleString() + ' 点'],
+    ].map(([l, v]) =>
+        `<div class="audio-info-item"><span class="label">${l}</span><span class="val">${v}</span></div>`
+    ).join('');
+}
+
+/* ============================================================
+   波形描画
+   ============================================================ */
+function drawWaveform() {
+    const canvas = document.getElementById('waveformCanvas');
+    const cssW = canvas.parentElement.clientWidth;
+    const cssH = 120;
+    const dpr  = window.devicePixelRatio || 1;
+    canvas.width  = cssW * dpr;
+    canvas.height = cssH * dpr;
+    canvas.style.width  = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+
+    const ctx  = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const data = audioBuffer.getChannelData(0);
+    const n    = data.length;
+    const PAD  = { top: 8, bottom: 18 };
+    const H    = cssH - PAD.top - PAD.bottom;
+    const midY = PAD.top + H / 2;
+
+    // 背景
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    // ゼロライン
+    ctx.strokeStyle = '#1e2135';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(cssW, midY); ctx.stroke();
+
+    // 解析ウィンドウ強調
+    const fftSize = parseInt(document.getElementById('fftSize').value);
+    const x0 = (winStartSample / n) * cssW;
+    const x1 = (Math.min(winStartSample + fftSize, n) / n) * cssW;
+    ctx.fillStyle = 'rgba(255,160,40,0.13)';
+    ctx.fillRect(x0, PAD.top, x1 - x0, H);
+    ctx.strokeStyle = 'rgba(255,160,40,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0, PAD.top); ctx.lineTo(x0, PAD.top + H); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,160,40,0.7)';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('解析ウィンドウ', x0 + 3, PAD.top + 11);
+
+    // 波形
+    ctx.strokeStyle = '#5a6aff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const step = Math.max(1, Math.floor(n / (cssW * dpr)));
+    for (let px = 0; px < cssW; px++) {
+        const si = Math.floor((px / cssW) * n);
+        let mn = 0, mx = 0;
+        for (let j = si; j < si + step && j < n; j++) {
+            if (data[j] < mn) mn = data[j];
+            if (data[j] > mx) mx = data[j];
+        }
+        ctx.moveTo(px + 0.5, midY + mx * (H / 2) * 0.9);
+        ctx.lineTo(px + 0.5, midY + mn * (H / 2) * 0.9);
+    }
+    ctx.stroke();
+
+    // 時間軸
+    ctx.fillStyle = '#444';
+    ctx.font = '10px system-ui';
+    const dur = audioBuffer.duration;
+    [0, 0.25, 0.5, 0.75, 1].forEach(r => {
+        const px = Math.round(r * (cssW - 1));
+        ctx.textAlign = r === 0 ? 'left' : r === 1 ? 'right' : 'center';
+        ctx.fillText((r * dur).toFixed(3) + 's', px, cssH - 2);
+    });
+}
+
+document.getElementById('waveformCanvas').addEventListener('click', e => {
+    if (!audioBuffer) return;
+    const rect = e.target.getBoundingClientRect();
+    winStartSample = Math.max(0, Math.floor(((e.clientX - rect.left) / rect.width) * audioBuffer.length));
+    drawWaveform();
+    updateWaveformInfo();
+});
+
+document.getElementById('fftSize').addEventListener('change', () => {
+    if (audioBuffer) { drawWaveform(); updateWaveformInfo(); }
+});
+
+function updateWaveformInfo() {
+    const fftSize = parseInt(document.getElementById('fftSize').value);
+    const sr      = audioBuffer.sampleRate;
+    const tStart  = (winStartSample / sr).toFixed(4);
+    const tEnd    = ((winStartSample + fftSize) / sr).toFixed(4);
+    const res     = (sr / fftSize).toFixed(2);
+    document.getElementById('waveformInfo').textContent =
+        `解析ウィンドウ: ${tStart}s ～ ${tEnd}s  (${fftSize} 点 / 周波数分解能: ${res} Hz/bin)`;
+}
+
+/* ============================================================
+   打撃点自動検出（最大振幅の位置を探してウィンドウを設定）
+   ============================================================ */
+function autoDetect() {
+    if (!audioBuffer) return;
+    const data = audioBuffer.getChannelData(0);
+    let maxAbs = 0, maxIdx = 0;
+    for (let i = 0; i < data.length; i++) {
+        if (Math.abs(data[i]) > maxAbs) { maxAbs = Math.abs(data[i]); maxIdx = i; }
+    }
+    const fftSize = parseInt(document.getElementById('fftSize').value);
+    winStartSample = Math.max(0, maxIdx - Math.floor(fftSize * 0.08));
+    drawWaveform();
+    updateWaveformInfo();
+}
+
+/* ============================================================
+   反復 FFT（Cooley–Tukey in-place）— 大きいバッファでもスタックオーバーフローしない
+   ============================================================ */
+function fftInPlace(re, im) {
+    const n = re.length;
+
+    // ビット反転置換
+    for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            let t;
+            t = re[i]; re[i] = re[j]; re[j] = t;
+            t = im[i]; im[i] = im[j]; im[j] = t;
+        }
+    }
+
+    // バタフライ演算
+    for (let len = 2; len <= n; len <<= 1) {
+        const ang = -2 * Math.PI / len;
+        const wR  = Math.cos(ang), wI = Math.sin(ang);
+        for (let i = 0; i < n; i += len) {
+            let curR = 1, curI = 0;
+            const half = len >> 1;
+            for (let j = 0; j < half; j++) {
+                const uR = re[i + j],        uI = im[i + j];
+                const vR = re[i + j + half] * curR - im[i + j + half] * curI;
+                const vI = re[i + j + half] * curI + im[i + j + half] * curR;
+                re[i + j]        = uR + vR;
+                im[i + j]        = uI + vI;
+                re[i + j + half] = uR - vR;
+                im[i + j + half] = uI - vI;
+                const tmp = curR * wR - curI * wI;
+                curI = curR * wI + curI * wR;
+                curR = tmp;
+            }
+        }
+    }
+}
+
+/* ============================================================
    窓関数
-   ========================================================= */
-function applyWindow(data, type) {
-    const n = data.length;
-    return data.map((v, i) => {
+   ============================================================ */
+function makeWindow(type, n) {
+    return Array.from({length: n}, (_, i) => {
         switch (type) {
-            case 'hann':     return v * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
-            case 'hamming':  return v * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (n - 1)));
-            case 'blackman': return v * (0.42 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))
-                                             + 0.08 * Math.cos(4 * Math.PI * i / (n - 1)));
-            default:         return v; // rect
+            case 'hann':     return 0.5  * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+            case 'hamming':  return 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (n - 1));
+            case 'blackman': return 0.42 - 0.5  * Math.cos(2 * Math.PI * i / (n - 1))
+                                         + 0.08 * Math.cos(4 * Math.PI * i / (n - 1));
+            default:         return 1;
         }
     });
 }
 
-/* =========================================================
-   プリセット信号生成
-   ========================================================= */
-const PRESETS = {
-    sine:   () => Array.from({length: 64}, (_, i) => Math.sin(2 * Math.PI * i / 64)),
-    multi:  () => Array.from({length: 64}, (_, i) =>
-                    Math.sin(2 * Math.PI * 3 * i / 64) +
-                    0.5 * Math.sin(2 * Math.PI * 7 * i / 64) +
-                    0.25 * Math.sin(2 * Math.PI * 15 * i / 64)),
-    square: () => Array.from({length: 64}, (_, i) => (i % 16 < 8 ? 1 : -1)),
-    noise:  () => Array.from({length: 64}, () => Math.random() * 2 - 1),
-    chirp:  () => Array.from({length: 64}, (_, i) => Math.sin(2 * Math.PI * (0.5 + i * 0.2) * i / 64)),
-};
+/* ============================================================
+   FFT 解析実行
+   ============================================================ */
+let lastNormMags = [];
+let lastFreqsArr = [];
 
-function loadPreset(name) {
-    const data = PRESETS[name]();
-    document.getElementById('inputData').value = data.map(v => v.toFixed(4)).join(', ');
+function analyzeAudio() {
+    if (!audioBuffer) return;
+
+    const fftSize = parseInt(document.getElementById('fftSize').value);
+    const winType = document.getElementById('waveWindowFunc').value;
+    const sr      = audioBuffer.sampleRate;
+    const raw     = audioBuffer.getChannelData(0);
+    const win     = makeWindow(winType, fftSize);
+
+    const re = new Float64Array(fftSize);
+    const im = new Float64Array(fftSize);
+    for (let i = 0; i < fftSize; i++) {
+        const si = winStartSample + i;
+        re[i] = si < raw.length ? raw[si] * win[i] : 0;
+    }
+
+    fftInPlace(re, im);
+
+    // 片側スペクトル（正規化）
+    const halfN = fftSize / 2 + 1;
+    const mags  = new Float64Array(halfN);
+    const freqs = new Float64Array(halfN);
+    let maxMag  = 1e-12;
+
+    for (let i = 0; i < halfN; i++) {
+        const m  = Math.sqrt(re[i] * re[i] + im[i] * im[i]) / fftSize;
+        mags[i]  = (i === 0 || i === fftSize / 2) ? m : m * 2;
+        freqs[i] = (i * sr) / fftSize;
+        if (mags[i] > maxMag) maxMag = mags[i];
+    }
+
+    const normMags = Array.from(mags, m => m / maxMag);
+    lastNormMags   = normMags;
+    lastFreqsArr   = Array.from(freqs);
+
+    const freqMax = parseFloat(document.getElementById('freqMax').value) || 5000;
+    drawSpectrum(normMags, freqs, freqMax);
+    showResults(normMags, freqs, freqMax);
+    document.getElementById('spectrumCard').style.display = '';
+    document.getElementById('resultsCard').style.display  = '';
 }
 
-/* =========================================================
-   メイン解析
-   ========================================================= */
-let lastMagnitudes = [];
-let lastFreqs = [];
-
-function runFFT() {
-    const errorEl = document.getElementById('errorMsg');
-    errorEl.style.display = 'none';
-
-    const inputStr = document.getElementById('inputData').value;
-    let data = inputStr.split(',').map(x => parseFloat(x.trim())).filter(x => !isNaN(x));
-
-    if (data.length < 2) {
-        showError('データが少なすぎます。2 点以上入力してください。');
-        return;
-    }
-
-    const sampleRate = parseFloat(document.getElementById('sampleRate').value) || 8;
-    const windowType = document.getElementById('windowFunc').value;
-    const scaleType  = document.getElementById('scaleType').value;
-
-    // 窓関数適用前のデータ点数を記録
-    const rawN = data.length;
-
-    // ゼロパディング
-    let n = Math.pow(2, Math.ceil(Math.log2(rawN)));
-    if (n < 2) n = 2;
-    while (data.length < n) data.push(0);
-
-    // 窓関数（ゼロパディング前の有効部分のみ）
-    const windowed = applyWindow(data.slice(0, rawN), windowType).concat(data.slice(rawN));
-
-    const result = fft(windowed, new Array(n).fill(0));
-
-    // 振幅計算（片側スペクトル）
-    const halfN = n / 2;
-    const mags = [], freqs = [];
-    for (let i = 0; i <= halfN; i++) {
-        const mag = Math.sqrt(result.real[i] ** 2 + result.imag[i] ** 2) / n;
-        mags.push(i === 0 || i === halfN ? mag : mag * 2); // 片側補正
-        freqs.push((i * sampleRate) / n);
-    }
-
-    // dB 変換
-    let displayMags = mags;
-    if (scaleType === 'db') {
-        const ref = Math.max(...mags) || 1e-10;
-        displayMags = mags.map(m => 20 * Math.log10(Math.max(m, 1e-10) / ref));
-    }
-
-    lastMagnitudes = displayMags;
-    lastFreqs = freqs;
-
-    drawChart(displayMags, freqs, scaleType);
-    updateStats(mags, freqs, rawN, n, sampleRate);
-    showPeaks(mags, freqs);
-}
-
-/* =========================================================
-   Canvas チャート描画
-   ========================================================= */
-function drawChart(mags, freqs, scaleType) {
-    const canvas = document.getElementById('chartCanvas');
-    const dpr = window.devicePixelRatio || 1;
-
-    const cssW = canvas.parentElement.clientWidth;
-    const cssH = 240;
+/* ============================================================
+   スペクトル描画
+   ============================================================ */
+function drawSpectrum(normMags, freqs, freqMax) {
+    const canvas = document.getElementById('spectrumCanvas');
+    const cssW   = canvas.parentElement.clientWidth;
+    const cssH   = 240;
+    const dpr    = window.devicePixelRatio || 1;
     canvas.width  = cssW * dpr;
     canvas.height = cssH * dpr;
     canvas.style.width  = cssW + 'px';
@@ -444,193 +788,190 @@ function drawChart(mags, freqs, scaleType) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const PAD = { top: 16, right: 16, bottom: 48, left: 56 };
-    const W = cssW - PAD.left - PAD.right;
-    const H = cssH - PAD.top  - PAD.bottom;
+    const PAD = { top: 24, right: 16, bottom: 48, left: 58 };
+    const W   = cssW - PAD.left - PAD.right;
+    const H   = cssH - PAD.top  - PAD.bottom;
 
-    // 背景
     ctx.fillStyle = '#0f1117';
     ctx.fillRect(0, 0, cssW, cssH);
 
-    // データ範囲
-    let minVal = scaleType === 'db' ? Math.min(...mags) : 0;
-    let maxVal = Math.max(...mags);
-    if (maxVal === minVal) maxVal = minVal + 1;
-    const range = maxVal - minVal;
+    // 表示範囲インデックスを求める
+    const endIdx = freqs.findIndex(f => f > freqMax);
+    const len    = endIdx > 0 ? endIdx : normMags.length;
 
-    // グリッド線
+    // グリッド
     ctx.strokeStyle = '#1e2135';
-    ctx.lineWidth = 1;
-    const gridLines = 5;
-    for (let g = 0; g <= gridLines; g++) {
-        const y = PAD.top + H - (g / gridLines) * H;
+    ctx.lineWidth   = 1;
+    ctx.fillStyle   = '#555';
+    ctx.font        = '11px system-ui';
+    for (let g = 0; g <= 5; g++) {
+        const y   = PAD.top + H - (g / 5) * H;
+        const val = (g / 5).toFixed(1);
         ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + W, y); ctx.stroke();
-
-        // Y 軸ラベル
-        const val = minVal + (g / gridLines) * range;
-        ctx.fillStyle = '#555';
-        ctx.font = '11px system-ui';
         ctx.textAlign = 'right';
-        ctx.fillText(scaleType === 'db' ? val.toFixed(1) : val.toFixed(3), PAD.left - 6, y + 4);
+        ctx.fillText(val, PAD.left - 6, y + 4);
     }
 
-    // バー描画
-    const barCount = mags.length;
-    const barW = Math.max(1, W / barCount - 1);
+    // バー（グラデーション）
+    const barW = Math.max(1, W / len - 0.3);
+    const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + H);
+    grad.addColorStop(0.0, '#ff6b4a');
+    grad.addColorStop(0.4, '#ffd166');
+    grad.addColorStop(1.0, '#06d6a0');
+    ctx.fillStyle = grad;
 
-    const gradient = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + H);
-    gradient.addColorStop(0, '#7c8fff');
-    gradient.addColorStop(1, '#3a4adf');
-    ctx.fillStyle = gradient;
+    for (let i = 0; i < len; i++) {
+        const x = PAD.left + (i / len) * W;
+        const h = Math.max(1, normMags[i] * H);
+        ctx.fillRect(x, PAD.top + H - h, barW, h);
+    }
 
-    mags.forEach((m, i) => {
-        const x = PAD.left + (i / barCount) * W;
-        const normed = (m - minVal) / range;
-        const h = Math.max(1, normed * H);
-        const y = PAD.top + H - h;
-        ctx.fillRect(x, y, barW, h);
+    // ピークマーカー
+    const peaks = detectPeaks(normMags, freqs, freqMax, len);
+    peaks.slice(0, 8).forEach((p, pi) => {
+        const xi = Math.round((p._idx / len) * W);
+        if (xi < 0 || xi > W) return;
+        const x = PAD.left + xi;
+        const y = PAD.top + H - p.mag * H;
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(x, y - 4); ctx.lineTo(x, PAD.top + 4); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle   = '#fff';
+        ctx.font        = 'bold 10px system-ui';
+        ctx.textAlign   = 'center';
+        const label = p.freq >= 1000 ? (p.freq / 1000).toFixed(2) + 'k' : p.freq.toFixed(0);
+        ctx.fillText(label + 'Hz', x, PAD.top + 12 + (pi % 2) * 11);
     });
 
-    // X 軸ラベル（周波数）
+    // X 軸ラベル
     ctx.fillStyle = '#555';
-    ctx.font = '11px system-ui';
+    ctx.font      = '11px system-ui';
     ctx.textAlign = 'center';
-    const xTicks = Math.min(8, barCount);
-    for (let t = 0; t <= xTicks; t++) {
-        const idx = Math.round((t / xTicks) * (freqs.length - 1));
-        const x = PAD.left + (idx / barCount) * W;
-        const fVal = freqs[idx];
-        ctx.fillText(fVal >= 1000 ? (fVal / 1000).toFixed(1) + 'k' : fVal.toFixed(2), x, PAD.top + H + 18);
+    const ticks = 8;
+    for (let t = 0; t <= ticks; t++) {
+        const fVal = (t / ticks) * freqMax;
+        const x    = PAD.left + (t / ticks) * W;
+        ctx.fillText(fVal >= 1000 ? (fVal / 1000).toFixed(1) + 'k' : fVal.toFixed(0), x, PAD.top + H + 16);
     }
-
-    // 軸タイトル
-    ctx.fillStyle = '#666';
-    ctx.font = '11px system-ui';
-    ctx.textAlign = 'center';
     ctx.fillText('周波数 (Hz)', PAD.left + W / 2, cssH - 4);
 
     // Y 軸タイトル
     ctx.save();
     ctx.translate(14, PAD.top + H / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText(scaleType === 'db' ? '振幅 (dB)' : '振幅', 0, 0);
+    ctx.fillText('振幅（正規化）', 0, 0);
     ctx.restore();
 
     // 軸線
     ctx.strokeStyle = '#3a3d55';
-    ctx.lineWidth = 1;
+    ctx.lineWidth   = 1;
     ctx.beginPath();
     ctx.moveTo(PAD.left, PAD.top);
     ctx.lineTo(PAD.left, PAD.top + H);
     ctx.lineTo(PAD.left + W, PAD.top + H);
     ctx.stroke();
 
-    // マウスホバー用データを保存
-    canvas._chartMeta = { PAD, W, H, mags, freqs, minVal, range, barW, dpr };
+    // ツールチップ用データ
+    canvas._meta = { PAD, W, H, normMags, freqs, len };
 }
 
-/* =========================================================
-   ツールチップ
-   ========================================================= */
-document.getElementById('chartCanvas').addEventListener('mousemove', e => {
-    const canvas = e.target;
-    const meta = canvas._chartMeta;
+// スペクトルのツールチップ
+document.getElementById('spectrumCanvas').addEventListener('mousemove', e => {
+    const meta = e.target._meta;
     if (!meta) return;
-
-    const rect   = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const { PAD, W, mags, freqs } = meta;
-
-    const relX = mouseX - PAD.left;
-    if (relX < 0 || relX > W) { hideTooltip(); return; }
-
-    const idx = Math.round((relX / W) * (mags.length - 1));
-    if (idx < 0 || idx >= mags.length) { hideTooltip(); return; }
-
+    const rect = e.target.getBoundingClientRect();
+    const relX = e.clientX - rect.left - meta.PAD.left;
+    if (relX < 0 || relX > meta.W) { hideTooltip(); return; }
+    const idx = Math.round((relX / meta.W) * (meta.len - 1));
     const tip = document.getElementById('tooltip');
     tip.style.display = 'block';
-    tip.style.left = (e.clientX + 12) + 'px';
-    tip.style.top  = (e.clientY - 32) + 'px';
-    tip.innerHTML  = `<b>${freqs[idx].toFixed(3)} Hz</b><br>振幅: ${mags[idx].toFixed(4)}`;
+    tip.style.left    = (e.clientX + 12) + 'px';
+    tip.style.top     = (e.clientY - 32) + 'px';
+    tip.innerHTML     = `<b>${meta.freqs[idx].toFixed(2)} Hz</b><br>振幅: ${meta.normMags[idx].toFixed(4)}`;
 });
+document.getElementById('spectrumCanvas').addEventListener('mouseleave', hideTooltip);
+function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
 
-document.getElementById('chartCanvas').addEventListener('mouseleave', hideTooltip);
+/* ============================================================
+   ピーク検出（局所最大値 + 閾値フィルタ）
+   ============================================================ */
+function detectPeaks(mags, freqs, freqMax, len) {
+    const threshold = 0.04;
+    const minSep    = Math.max(2, Math.floor(len / 100));
+    const peaks     = [];
 
-function hideTooltip() {
-    document.getElementById('tooltip').style.display = 'none';
-}
-
-/* =========================================================
-   統計情報
-   ========================================================= */
-function updateStats(mags, freqs, rawN, paddedN, sampleRate) {
-    const statsCard = document.getElementById('statsCard');
-    const statsGrid = document.getElementById('statsGrid');
-    statsCard.style.display = '';
-
-    const maxMag  = Math.max(...mags);
-    const maxIdx  = mags.indexOf(maxMag);
-    const domFreq = freqs[maxIdx];
-    const freqRes = sampleRate / paddedN;
-    const rms     = Math.sqrt(mags.reduce((s, m) => s + m * m, 0) / mags.length);
-
-    statsGrid.innerHTML = [
-        ['入力点数',       `${rawN} 点`],
-        ['FFT サイズ',     `${paddedN} 点`],
-        ['周波数分解能',   `${freqRes.toFixed(4)} Hz/bin`],
-        ['最大成分周波数', `${domFreq.toFixed(3)} Hz`],
-        ['最大振幅',       maxMag.toFixed(4)],
-        ['RMS 振幅',       rms.toFixed(4)],
-    ].map(([label, value]) => `
-        <div class="stat-box">
-            <div class="stat-label">${label}</div>
-            <div class="stat-value">${value}</div>
-        </div>`).join('');
-}
-
-/* =========================================================
-   ピーク検出
-   ========================================================= */
-function showPeaks(mags, freqs) {
-    const peaksCard = document.getElementById('peaksCard');
-    const peakList  = document.getElementById('peakList');
-    peaksCard.style.display = '';
-
-    const peaks = mags.map((m, i) => ({ mag: m, freq: freqs[i], idx: i }))
-        .filter((p, i, arr) =>
-            i > 0 && i < arr.length - 1 &&
-            p.mag > arr[i - 1].mag &&
-            p.mag > arr[i + 1].mag)
-        .sort((a, b) => b.mag - a.mag)
-        .slice(0, 5);
-
-    const colors = ['#7c8fff', '#ff6b9d', '#ffd166', '#06d6a0', '#ef476f'];
-
-    if (peaks.length === 0) {
-        peakList.innerHTML = '<div style="color:#666;font-size:0.8rem;padding:6px">ピークが検出されませんでした。</div>';
-        return;
+    for (let i = 1; i < len - 1; i++) {
+        if (mags[i] < threshold) continue;
+        if (mags[i] <= mags[i - 1] || mags[i] <= mags[i + 1]) continue;
+        // 最小間隔より近い既存ピークが大きければスキップ
+        let skip = false;
+        for (let k = peaks.length - 1; k >= 0; k--) {
+            if (Math.abs(i - peaks[k]._idx) < minSep) {
+                if (peaks[k].mag >= mags[i]) { skip = true; break; }
+                peaks.splice(k, 1);
+            }
+        }
+        if (!skip) peaks.push({ freq: freqs[i], mag: mags[i], _idx: i });
     }
-
-    peakList.innerHTML = peaks.map((p, i) => `
-        <div class="peak-item" style="border-color:${colors[i]}">
-            <span class="freq"># ${i + 1} &nbsp; ${p.freq.toFixed(4)} Hz</span>
-            <span class="amp">振幅 ${p.mag.toFixed(4)}</span>
-        </div>`).join('');
+    return peaks.sort((a, b) => b.mag - a.mag);
 }
 
-/* =========================================================
-   エラー表示
-   ========================================================= */
-function showError(msg) {
-    const el = document.getElementById('errorMsg');
+/* ============================================================
+   材料カテゴリ推定
+   ============================================================ */
+function guessCategory(freq) {
+    if (freq <  200) return { label: '超低周波 / 大型部材',       color: '#7aafff' };
+    if (freq <  500) return { label: '木材（針葉樹）',             color: '#C4852A' };
+    if (freq < 1500) return { label: '木材（広葉樹）/ RC 構造体', color: '#D4A96A' };
+    if (freq < 3000) return { label: 'コンクリート / 石材',        color: '#9A9A9A' };
+    if (freq < 8000) return { label: 'セラミック / 硬質材',        color: '#E8D4B8' };
+    return               { label: '金属 / 超硬質材',               color: '#A0C8FF' };
+}
+
+/* ============================================================
+   結果テーブル
+   ============================================================ */
+const RANK_COLORS = ['#ffd700', '#c0c0c0', '#cd7f32', '#9a9aaa', '#7a7a8a'];
+
+function showResults(normMags, freqs, freqMax) {
+    const endIdx = freqs.findIndex(f => f > freqMax);
+    const len    = endIdx > 0 ? endIdx : normMags.length;
+    const peaks  = detectPeaks(normMags, freqs, freqMax, len).slice(0, 10);
+
+    document.getElementById('resultsBody').innerHTML = peaks.map((p, i) => {
+        const cat   = guessCategory(p.freq);
+        const rank  = RANK_COLORS[i] || '#5a5a7a';
+        const barW  = Math.round(p.mag * 120);
+        return `
+        <tr>
+            <td><span class="rank-badge" style="background:${rank}25;color:${rank}">${i + 1}</span></td>
+            <td style="font-weight:700;font-variant-numeric:tabular-nums;font-size:1rem">${p.freq.toFixed(2)}</td>
+            <td>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <div style="width:${barW}px;height:6px;background:${rank};border-radius:3px;min-width:2px"></div>
+                    <span style="font-size:0.8rem;color:#aaa">${p.mag.toFixed(4)}</span>
+                </div>
+            </td>
+            <td><span class="material-tag" style="background:${cat.color}20;color:${cat.color}">${cat.label}</span></td>
+        </tr>`;
+    }).join('');
+}
+
+/* ============================================================
+   ユーティリティ
+   ============================================================ */
+function setStatus(id, msg, type = '') {
+    const el = document.getElementById(id);
     el.textContent = msg;
-    el.style.display = 'block';
+    el.className   = 'status-bar' + (type ? ' ' + type : '');
 }
 
-/* =========================================================
-   初回実行
-   ========================================================= */
-runFFT();
+/* ============================================================
+   初期化
+   ============================================================ */
+buildSampleUI();
 </script>
 </body>
 </html>
