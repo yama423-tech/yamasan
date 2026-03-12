@@ -13,124 +13,102 @@
             --surface2:   #1c2330;
             --border:     #30363d;
             --accent:     #e6a817;
-            --accent-dim: rgba(230,168,23,.14);
+            --accent-dim: rgba(230,168,23,.13);
             --blue:       #4fc3f7;
-            --blue-dim:   rgba(79,195,247,.12);
+            --blue-dim:   rgba(79,195,247,.10);
             --orange:     #ffaa44;
-            --orange-dim: rgba(255,170,68,.12);
+            --orange-dim: rgba(255,170,68,.10);
+            --bnd-col:    #a8d560;
+            --bnd-dim:    rgba(168,213,96,.10);
             --danger:     #f85149;
             --warn:       #d29922;
             --success:    #3fb950;
             --text:       #e6edf3;
             --muted:      #8b949e;
             --dim:        #484f58;
-            --panel-w:    360px;
+            --panel-w:    370px;
             --r:          8px;
         }
 
         body {
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
+            background: var(--bg); color: var(--text);
+            display: flex; height: 100vh; overflow: hidden;
         }
 
         /* ── CANVAS ── */
         #canvas-container { flex: 1; position: relative; overflow: hidden; }
         #canvas-container canvas { display: block; }
 
-        .hud {
-            position: absolute;
-            pointer-events: none;
-            font-size: 11px;
-            color: rgba(230,237,243,.5);
-            line-height: 1.9;
-        }
-        #hud-info { top: 14px; left: 14px; font-size: 12px; font-weight: 500; color: rgba(230,237,243,.8); }
+        .hud { position: absolute; pointer-events: none; font-size: 11px; color: rgba(230,237,243,.48); line-height: 1.9; }
+        #hud-info { top: 14px; left: 14px; font-size: 12px; font-weight: 500; color: rgba(230,237,243,.82); }
         #hud-info strong { color: var(--accent); }
         #hud-cam  { bottom: 14px; left: 14px; }
 
         #legend {
-            position: absolute;
-            bottom: 14px; right: 14px;
-            background: rgba(22,27,34,.88);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 10px 14px;
-            font-size: 11px;
-            color: var(--muted);
-            pointer-events: none;
-            line-height: 2.1;
+            position: absolute; bottom: 14px; right: 14px;
+            background: rgba(22,27,34,.9); border: 1px solid var(--border);
+            border-radius: var(--r); padding: 10px 14px;
+            font-size: 11px; color: var(--muted); pointer-events: none; line-height: 2.2;
         }
         .ld { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 
         /* ── PANEL ── */
         #ui-panel {
-            width: var(--panel-w);
-            display: flex; flex-direction: column;
-            background: var(--surface);
-            border-left: 1px solid var(--border);
+            width: var(--panel-w); display: flex; flex-direction: column;
+            background: var(--surface); border-left: 1px solid var(--border);
         }
         .panel-header {
-            padding: 16px 18px;
-            background: var(--surface2);
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
+            padding: 15px 18px; background: var(--surface2);
+            border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
-        .panel-header h2 { font-size: .97em; font-weight: 700; }
-        .panel-header p  { font-size: .71em; color: var(--muted); margin-top: 3px; }
+        .panel-header h2 { font-size: .95em; font-weight: 700; }
+        .panel-header p  { font-size: .70em; color: var(--muted); margin-top: 3px; }
 
         .panel-body {
-            flex: 1; overflow-y: auto; padding: 14px;
+            flex: 1; overflow-y: auto; padding: 13px;
             scrollbar-width: thin; scrollbar-color: var(--border) transparent;
         }
         .panel-body::-webkit-scrollbar { width: 4px; }
         .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
         /* ── SECTIONS ── */
-        .section { margin-bottom: 20px; }
-
+        .section { margin-bottom: 18px; }
         .section-title {
-            font-size: .66em; font-weight: 700; letter-spacing: .9px;
+            font-size: .65em; font-weight: 700; letter-spacing: .9px;
             text-transform: uppercase; color: var(--dim);
-            padding-bottom: 6px; border-bottom: 1px solid var(--border);
-            margin-bottom: 11px;
+            padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 10px;
         }
 
-        /* Layer-tinted sections */
-        .layer1-section { border-left: 3px solid var(--blue);   padding-left: 10px; }
-        .layer2-section { border-left: 3px solid var(--orange); padding-left: 10px; }
+        /* Layer tinted borders */
+        .sec-l1  { border-left: 3px solid var(--blue);    padding-left: 10px; }
+        .sec-l2  { border-left: 3px solid var(--orange);  padding-left: 10px; }
+        .sec-bnd { border-left: 3px solid var(--bnd-col); padding-left: 10px; }
 
-        .layer-header {
-            display: flex; align-items: center; gap: 7px; margin-bottom: 10px;
-        }
+        .layer-hdr { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
         .layer-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
         /* ── INPUTS ── */
         .input-group { margin-bottom: 9px; }
-        .input-group label {
-            display: block; font-size: .75em; color: var(--muted); margin-bottom: 4px;
-        }
-        .input-group label .unit { color: var(--blue); font-size: .88em; }
+        .input-group label { display: block; font-size: .75em; color: var(--muted); margin-bottom: 4px; }
+        .input-group label .unit { color: var(--blue); font-size: .87em; }
+        .note { font-size: .64em; color: var(--dim); margin-top: 3px; }
 
         input[type="number"] {
             width: 100%; padding: 7px 9px;
             background: var(--bg); border: 1px solid var(--border);
-            border-radius: 6px; color: var(--text); font-size: .87em; outline: none;
-            transition: border-color .18s, background .18s;
+            border-radius: 6px; color: var(--text); font-size: .87em;
+            outline: none; transition: border-color .18s, background .18s;
         }
         input[type="number"]:focus { border-color: var(--accent); background: var(--accent-dim); }
 
         /* ── CHIPS ── */
-        .chip-row { display: flex; gap: 5px; flex-wrap: wrap; }
+        .chip-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
         .chip {
-            flex: 1; min-width: 55px; padding: 5px 3px;
+            flex: 1; min-width: 54px; padding: 5px 3px;
             background: var(--bg); border: 1px solid var(--border);
-            border-radius: 20px; color: var(--muted); font-size: .68em;
-            text-align: center; cursor: pointer;
-            transition: all .16s; user-select: none;
+            border-radius: 20px; color: var(--muted); font-size: .67em;
+            text-align: center; cursor: pointer; transition: all .16s; user-select: none;
         }
         .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
         .chip.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); font-weight: 700; }
@@ -138,66 +116,53 @@
         /* ── RESULT CARD ── */
         #result {
             background: var(--bg); border: 1px solid var(--border);
-            border-radius: var(--r); padding: 15px; margin-top: 4px;
+            border-radius: var(--r); padding: 14px; margin-top: 2px;
         }
 
-        /* 3D / 2D compare row */
-        .cmp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 9px; }
+        .cmp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px; }
         .cmp-card {
             background: var(--surface2); border: 1px solid var(--border);
-            border-radius: 6px; padding: 11px 10px; text-align: center;
+            border-radius: 6px; padding: 10px; text-align: center;
         }
-        .cmp-card.primary { border-color: rgba(230,168,23,.3); }
-        .cmp-card .c-label {
-            font-size: .6em; text-transform: uppercase; letter-spacing: .7px;
-            color: var(--dim); margin-bottom: 5px;
-        }
-        .cmp-card .c-val {
-            font-size: 2.1em; font-weight: 800; letter-spacing: -1px;
-            transition: color .3s; font-variant-numeric: tabular-nums;
-        }
-        .cmp-card .c-status { font-size: .63em; font-weight: 600; margin-top: 3px; min-height: 1.3em; }
+        .cmp-card.primary { border-color: rgba(230,168,23,.28); }
+        .cmp-card .c-label { font-size: .58em; text-transform: uppercase; letter-spacing: .7px; color: var(--dim); margin-bottom: 4px; }
+        .cmp-card .c-val   { font-size: 2em; font-weight: 800; letter-spacing: -1px; transition: color .3s; font-variant-numeric: tabular-nums; }
+        .cmp-card .c-status { font-size: .62em; font-weight: 600; margin-top: 3px; min-height: 1.3em; }
 
-        /* Gauge */
         .gauge-track {
             position: relative; height: 4px; background: var(--border);
-            border-radius: 3px; margin: 8px 0; overflow: hidden;
+            border-radius: 3px; margin: 7px 0; overflow: hidden;
         }
-        .gauge-track::before { content:''; position:absolute; left:33%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.13); }
-        .gauge-track::after  { content:''; position:absolute; left:67%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.13); }
+        .gauge-track::before { content:''; position:absolute; left:33%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.12); }
+        .gauge-track::after  { content:''; position:absolute; left:67%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.12); }
         .gauge-fill { height:100%; border-radius:3px; transition: width .4s ease, background .3s; }
 
-        /* Ratio line */
         .ratio-line {
             display: flex; justify-content: space-between; align-items: center;
             background: var(--surface2); border: 1px solid var(--border);
-            border-radius: 6px; padding: 6px 11px; margin-bottom: 9px;
-            font-size: .75em; color: var(--muted);
+            border-radius: 6px; padding: 5px 11px; margin-bottom: 8px;
+            font-size: .74em; color: var(--muted);
         }
         .ratio-line .r-val { font-weight: 700; font-size: 1.05em; color: var(--accent); }
 
-        /* Stats grid */
         .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-        .stat-card {
-            background: var(--surface); border: 1px solid var(--border);
-            border-radius: 6px; padding: 7px 9px;
-        }
-        .stat-card .s-lbl { font-size: .6em; color: var(--dim); margin-bottom: 2px; text-transform: uppercase; letter-spacing: .5px; }
-        .stat-card .s-val { font-size: .86em; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
+        .stat-card .s-lbl { font-size: .58em; color: var(--dim); margin-bottom: 2px; text-transform: uppercase; letter-spacing: .4px; }
+        .stat-card .s-val { font-size: .85em; font-weight: 600; font-variant-numeric: tabular-nums; }
 
         .panel-footer {
-            flex-shrink: 0; padding: 9px 16px;
+            flex-shrink: 0; padding: 8px 15px;
             border-top: 1px solid var(--border);
-            font-size: .66em; color: var(--dim); text-align: center;
+            font-size: .63em; color: var(--dim); text-align: center; line-height: 1.6;
         }
     </style>
 </head>
 <body>
 
-<!-- ========== 3D CANVAS ========== -->
+<!-- ========== CANVAS ========== -->
 <div id="canvas-container">
     <div class="hud" id="hud-info">
-        <strong>3D 円弧すべり解析</strong> &nbsp;|&nbsp; 2層地盤 · Modified Fellenius (3D / 2D 比較)
+        <strong>3D 円弧すべり解析</strong> &nbsp;|&nbsp; 2層地盤 · Modified Fellenius · 3D/2D 比較
     </div>
     <div class="hud" id="hud-cam">
         左ドラッグ: 回転 &nbsp;·&nbsp; スクロール: ズーム &nbsp;·&nbsp; 中ドラッグ: パン
@@ -205,10 +170,10 @@
     <div id="legend">
         <div><span class="ld" style="background:#5a7a4a"></span>地形</div>
         <div><span class="ld" style="background:#ff4444;opacity:.7"></span>すべり球</div>
-        <div><span class="ld" style="background:#ffaa44;opacity:.8"></span>層境界面</div>
+        <div><span class="ld" style="background:#a8d560;opacity:.85"></span>層境界面</div>
         <div><span class="ld" style="background:#4fc3f7;opacity:.8"></span>第1層コラム</div>
         <div><span class="ld" style="background:#ffaa44;opacity:.8"></span>第2層コラム</div>
-        <div><span class="ld" style="background:#44ff99;opacity:.8"></span>2D中心断面</div>
+        <div><span class="ld" style="background:#44ff99;opacity:.8"></span>2D 中心断面</div>
     </div>
 </div>
 
@@ -216,28 +181,22 @@
 <div id="ui-panel">
     <div class="panel-header">
         <h2>3D 斜面安定解析</h2>
-        <p>2層地盤 · 球状すべり面 · カラム法 (3D/2D 比較)</p>
+        <p>2層地盤 · 球状すべり面 · 角度定義境界面 · 3D/2D 比較</p>
     </div>
 
     <div class="panel-body">
 
-        <!-- プリセット -->
-        <div class="section">
-            <div class="section-title">地盤プリセット（両層に適用）</div>
-            <div class="chip-row">
-                <div class="chip" data-preset="sand" onclick="applyPreset('sand')">砂質土</div>
-                <div class="chip" data-preset="clay" onclick="applyPreset('clay')">粘性土</div>
-                <div class="chip" data-preset="rock" onclick="applyPreset('rock')">岩盤</div>
-                <div class="chip" data-preset="soft" onclick="applyPreset('soft')">軟弱地盤</div>
-                <div class="chip" data-preset="same" onclick="applyPreset('same')">均質</div>
-            </div>
-        </div>
-
-        <!-- 第1層 (上位層) -->
-        <div class="section layer1-section">
-            <div class="layer-header">
+        <!-- ── 第1層 ── -->
+        <div class="section sec-l1">
+            <div class="layer-hdr">
                 <div class="layer-dot" style="background:var(--blue)"></div>
                 <div class="section-title" style="margin:0;border:none;padding:0">第1層（上位層）</div>
+            </div>
+            <div class="chip-row">
+                <div class="chip" data-layer="1" data-preset="sand" onclick="applyPreset(1,'sand')">砂質土</div>
+                <div class="chip" data-layer="1" data-preset="clay" onclick="applyPreset(1,'clay')">粘性土</div>
+                <div class="chip" data-layer="1" data-preset="rock" onclick="applyPreset(1,'rock')">岩盤</div>
+                <div class="chip" data-layer="1" data-preset="soft" onclick="applyPreset(1,'soft')">軟弱地盤</div>
             </div>
             <div class="input-group">
                 <label>粘着力 c₁ <span class="unit">(kN/m²)</span></label>
@@ -253,11 +212,17 @@
             </div>
         </div>
 
-        <!-- 第2層 (下位層・すべり面付近) -->
-        <div class="section layer2-section">
-            <div class="layer-header">
+        <!-- ── 第2層 ── -->
+        <div class="section sec-l2">
+            <div class="layer-hdr">
                 <div class="layer-dot" style="background:var(--orange)"></div>
                 <div class="section-title" style="margin:0;border:none;padding:0">第2層（下位層・すべり面付近）</div>
+            </div>
+            <div class="chip-row">
+                <div class="chip" data-layer="2" data-preset="sand" onclick="applyPreset(2,'sand')">砂質土</div>
+                <div class="chip" data-layer="2" data-preset="clay" onclick="applyPreset(2,'clay')">粘性土</div>
+                <div class="chip" data-layer="2" data-preset="rock" onclick="applyPreset(2,'rock')">岩盤</div>
+                <div class="chip" data-layer="2" data-preset="soft" onclick="applyPreset(2,'soft')">軟弱地盤</div>
             </div>
             <div class="input-group">
                 <label>粘着力 c₂ <span class="unit">(kN/m²)</span></label>
@@ -271,19 +236,27 @@
                 <label>単位重量 γ₂ <span class="unit">(kN/m³)</span></label>
                 <input type="number" id="gamma2" value="17" step="0.5" min="10" max="28">
             </div>
+        </div>
+
+        <!-- ── 層境界面 ── -->
+        <div class="section sec-bnd">
+            <div class="layer-hdr">
+                <div class="layer-dot" style="background:var(--bnd-col)"></div>
+                <div class="section-title" style="margin:0;border:none;padding:0">層境界面（角度定義）</div>
+            </div>
             <div class="input-group">
-                <label>
-                    第2層厚み比 t
-                    <span class="unit" style="margin-left:4px">(0=なし → 1=球中心まで)</span>
-                </label>
-                <input type="number" id="lratio" value="0.5" step="0.05" min="0" max="1">
-                <div style="font-size:.68em;color:var(--dim);margin-top:4px">
-                    層境界 y = Yc − R·(1−t)。すべり球底面からの鉛直高さ = t·R
-                </div>
+                <label>極角 θ <span class="unit">(°)</span></label>
+                <input type="number" id="theta" value="60" step="1" min="0" max="89">
+                <div class="note">球体中心から下向き鉛直を基準とした弧度（底部 0° → 赤道 90°）<br>境界高さ = Yc − R·cos θ</div>
+            </div>
+            <div class="input-group">
+                <label>傾斜角 α <span class="unit">(°)</span></label>
+                <input type="number" id="bndDip" value="0" step="1" min="-70" max="70">
+                <div class="note">正値 = 下流方向（+X）に傾斜。境界面: y = Yc−R·cosθ − tanα·(x−Xc)</div>
             </div>
         </div>
 
-        <!-- すべり球 -->
+        <!-- ── すべり球 ── -->
         <div class="section">
             <div class="section-title">すべり球 — 中心座標 &amp; 半径</div>
             <div class="input-group">
@@ -304,11 +277,10 @@
             </div>
         </div>
 
-        <!-- 結果 -->
+        <!-- ── 解析結果 ── -->
         <div class="section">
             <div class="section-title">解析結果</div>
             <div id="result">
-                <!-- 3D / 2D 比較 -->
                 <div class="cmp-row">
                     <div class="cmp-card primary">
                         <div class="c-label">3D 安全率 Fs</div>
@@ -324,31 +296,17 @@
                     </div>
                 </div>
 
-                <!-- 3D/2D 比 -->
                 <div class="ratio-line">
                     <span>3D / 2D 比</span>
                     <span class="r-val" id="ratio-val">--</span>
                     <span id="ratio-note" style="color:var(--muted)"></span>
                 </div>
 
-                <!-- Stats (3D) -->
                 <div class="stat-grid">
-                    <div class="stat-card">
-                        <div class="s-lbl">抵抗力 ΣR (3D)</div>
-                        <div class="s-val" id="st-resist">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="s-lbl">駆動力 ΣD (3D)</div>
-                        <div class="s-val" id="st-drive">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="s-lbl">土塊重量 (3D)</div>
-                        <div class="s-val" id="st-weight">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="s-lbl">有効コラム数</div>
-                        <div class="s-val" id="st-cols">--</div>
-                    </div>
+                    <div class="stat-card"><div class="s-lbl">抵抗力 ΣR (3D)</div><div class="s-val" id="st-resist">--</div></div>
+                    <div class="stat-card"><div class="s-lbl">駆動力 ΣD (3D)</div><div class="s-val" id="st-drive">--</div></div>
+                    <div class="stat-card"><div class="s-lbl">土塊重量 (3D)</div><div class="s-val" id="st-weight">--</div></div>
+                    <div class="stat-card"><div class="s-lbl">有効コラム数</div><div class="s-val" id="st-cols">--</div></div>
                 </div>
             </div>
         </div>
@@ -356,7 +314,7 @@
     </div><!-- /.panel-body -->
 
     <div class="panel-footer">
-        地形 100×100 m &nbsp;|&nbsp; 格子 ~1.7 m &nbsp;|&nbsp; 2D断面: z = Zc
+        地形 100×100 m · 格子 ~1.7 m · 2D断面: z = Zc
     </div>
 </div>
 
@@ -372,7 +330,7 @@
 // ─────────────────────────────────────────────────────────────
 const TERRAIN_SIZE = 100;
 const SEGMENTS     = 60;
-const PANEL_W      = 360;
+const PANEL_W      = 370;
 
 // ─────────────────────────────────────────────────────────────
 //  SCENE / RENDERER / CAMERA
@@ -396,11 +354,11 @@ document.getElementById('canvas-container').appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 8, 0);
-controls.enableDamping  = true;
-controls.dampingFactor  = 0.06;
-controls.minDistance    = 10;
-controls.maxDistance    = 400;
-controls.maxPolarAngle  = Math.PI * 0.52;
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance   = 10;
+controls.maxDistance   = 400;
+controls.maxPolarAngle = Math.PI * 0.52;
 controls.update();
 
 // ─────────────────────────────────────────────────────────────
@@ -434,12 +392,11 @@ function getTerrainHeight(x, z) {
     return slope + ripple;
 }
 
-function buildTerrain() {
+(function buildTerrain() {
     const geo  = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, SEGMENTS, SEGMENTS);
     const pos  = geo.attributes.position;
     const cols = new Float32Array(pos.count * 3);
     const c    = new THREE.Color();
-
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i), z = pos.getY(i);
         const h = getTerrainHeight(x, z);
@@ -450,70 +407,79 @@ function buildTerrain() {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
     geo.computeVertexNormals();
-
-    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-        vertexColors: true, shininess: 8, side: THREE.DoubleSide,
-    }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 8, side: THREE.DoubleSide }));
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
-    return mesh;
-}
-scene.add(buildTerrain());
+    scene.add(mesh);
+})();
 
 // ─────────────────────────────────────────────────────────────
 //  SLIP SPHERE
 // ─────────────────────────────────────────────────────────────
 const slipSolid = new THREE.Mesh(
     new THREE.SphereGeometry(1, 48, 32),
-    new THREE.MeshPhongMaterial({ color: 0xff3333, transparent: true, opacity: 0.09,
-        side: THREE.BackSide, depthWrite: false })
+    new THREE.MeshPhongMaterial({ color: 0xff3333, transparent: true, opacity: 0.09, side: THREE.BackSide, depthWrite: false })
 );
 const slipWire = new THREE.LineSegments(
     new THREE.WireframeGeometry(new THREE.SphereGeometry(1, 24, 16)),
-    new THREE.LineBasicMaterial({ color: 0xff5555, transparent: true, opacity: 0.32 })
+    new THREE.LineBasicMaterial({ color: 0xff5555, transparent: true, opacity: 0.30 })
 );
-[slipSolid, slipWire].forEach(m => scene.add(m));
+scene.add(slipSolid, slipWire);
 
 // ─────────────────────────────────────────────────────────────
-//  LAYER BOUNDARY DISK  (horizontal plane at y = yBound)
+//  LAYER BOUNDARY  (tilted disk in 3D, exact intersection circle)
+//
+//  Boundary plane:  sin(α)·(x−Xc) + cos(α)·(y−yBc) = 0
+//  where yBc = Yc − R·cos(θ)  (height at x=Xc, z=Zc)
+//  → y(x) = yBc − tan(α)·(x−Xc)
+//
+//  The plane–sphere intersection circle:
+//    d    = R·cos(α)·cos(θ)          [distance from sphere centre to plane]
+//    r    = R·√(1 − cos²α·cos²θ)    [intersection radius]
+//    ctr  = sphere_centre − d·n̂     [intersection circle centre]
 // ─────────────────────────────────────────────────────────────
+const bndGroup = new THREE.Group();
+
+// Filled disk
 const bndDisk = new THREE.Mesh(
-    new THREE.CircleGeometry(1, 64),
-    new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.22,
-        side: THREE.DoubleSide, depthWrite: false })
+    new THREE.CircleGeometry(1, 72),
+    new THREE.MeshBasicMaterial({ color: 0xa8d560, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false })
 );
-bndDisk.rotation.x = -Math.PI / 2;
-scene.add(bndDisk);
 
-const bndRing = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(
-        Array.from({ length: 65 }, (_, i) => new THREE.Vector3(Math.cos(i/64*Math.PI*2), 0, Math.sin(i/64*Math.PI*2)))
-    ),
-    new THREE.LineBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.55 })
+// Edge ring (unit circle in XY plane)
+const _ringPts = Array.from({ length: 97 }, (_, i) => {
+    const a = (i / 96) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a), Math.sin(a), 0);
+});
+const bndEdge = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(_ringPts),
+    new THREE.LineBasicMaterial({ color: 0xc8ee80, transparent: true, opacity: 0.75 })
 );
-scene.add(bndRing);
+
+bndGroup.add(bndDisk, bndEdge);
+scene.add(bndGroup);
 
 // ─────────────────────────────────────────────────────────────
 //  2D CENTERLINE ARC  (lower semicircle at z = zc)
 // ─────────────────────────────────────────────────────────────
-const arc2DPts = Array.from({ length: 65 }, (_, i) => {
-    const a = Math.PI + (i / 64) * Math.PI;  // π → 2π = lower half
-    return new THREE.Vector3(Math.cos(a), Math.sin(a), 0);
-});
 const arc2D = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(arc2DPts),
-    new THREE.LineBasicMaterial({ color: 0x44ff99, transparent: true, opacity: 0.7 })
+    new THREE.BufferGeometry().setFromPoints(
+        Array.from({ length: 65 }, (_, i) => {
+            const a = Math.PI + (i / 64) * Math.PI;
+            return new THREE.Vector3(Math.cos(a), Math.sin(a), 0);
+        })
+    ),
+    new THREE.LineBasicMaterial({ color: 0x44ff99, transparent: true, opacity: 0.75 })
 );
 scene.add(arc2D);
 
 // ─────────────────────────────────────────────────────────────
-//  COLUMN GROUPS (Layer 1 = blue, Layer 2 = orange)
+//  COLUMN GROUPS
 // ─────────────────────────────────────────────────────────────
 const colGroup = new THREE.Group();
 scene.add(colGroup);
-
-const MAT_L1 = new THREE.MeshBasicMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.22, wireframe: true });
-const MAT_L2 = new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.25, wireframe: true });
+const MAT_L1 = new THREE.MeshBasicMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.20, wireframe: true });
+const MAT_L2 = new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.24, wireframe: true });
 
 function clearColumns() {
     colGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); });
@@ -521,34 +487,22 @@ function clearColumns() {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  PRESETS
+//  SOIL PRESETS  (applied per layer independently)
 // ─────────────────────────────────────────────────────────────
-const PRESETS = {
-    sand: { c1: 0,  phi1: 35, g1: 19, c2: 0,  phi2: 28, g2: 18 },
-    clay: { c1: 20, phi1: 15, g1: 17, c2: 10, phi2:  8, g2: 16 },
-    rock: { c1: 50, phi1: 42, g1: 24, c2: 15, phi2: 25, g2: 22 },
-    soft: { c1: 5,  phi1:  8, g1: 15, c2:  2, phi2:  5, g2: 14 },
-    same: null,  // handled separately
+const SOIL = {
+    sand: { c:  0, phi: 35, gamma: 19 },
+    clay: { c: 20, phi: 15, gamma: 17 },
+    rock: { c: 50, phi: 42, gamma: 24 },
+    soft: { c:  5, phi:  8, gamma: 15 },
 };
 
-function applyPreset(key) {
-    let p;
-    if (key === 'same') {
-        // Copy L1 → L2 (uniform soil)
-        p = {
-            c1:   parseFloat(document.getElementById('c1').value)    || 10,
-            phi1: parseFloat(document.getElementById('phi1').value)  || 30,
-            g1:   parseFloat(document.getElementById('gamma1').value)|| 18,
-        };
-        p.c2 = p.c1; p.phi2 = p.phi1; p.g2 = p.g1;
-    } else {
-        p = PRESETS[key];
-        if (!p) return;
-    }
-    const set = (id, v) => { document.getElementById(id).value = v; };
-    set('c1', p.c1); set('phi1', p.phi1); set('gamma1', p.g1);
-    set('c2', p.c2); set('phi2', p.phi2); set('gamma2', p.g2);
-    document.querySelectorAll('.chip').forEach(el =>
+function applyPreset(layer, key) {
+    const p = SOIL[key];
+    if (!p) return;
+    document.getElementById(`c${layer}`).value     = p.c;
+    document.getElementById(`phi${layer}`).value   = p.phi;
+    document.getElementById(`gamma${layer}`).value = p.gamma;
+    document.querySelectorAll(`.chip[data-layer="${layer}"]`).forEach(el =>
         el.classList.toggle('active', el.dataset.preset === key)
     );
     scheduleUpdate();
@@ -559,44 +513,48 @@ function applyPreset(key) {
 // ─────────────────────────────────────────────────────────────
 function getParams() {
     const n = id => parseFloat(document.getElementById(id).value) || 0;
+    const theta  = Math.min(89, Math.max(0,  n('theta')));
+    const bndDip = Math.min(70, Math.max(-70, n('bndDip')));
     return {
-        c1:    Math.max(0, n('c1')),
-        phi1:  Math.max(0, n('phi1')) * Math.PI / 180,
-        g1:    Math.max(1, n('gamma1') || 18),
-        c2:    Math.max(0, n('c2')),
-        phi2:  Math.max(0, n('phi2')) * Math.PI / 180,
-        g2:    Math.max(1, n('gamma2') || 17),
-        t:     Math.min(1, Math.max(0, n('lratio'))),   // layer 2 thickness ratio
-        xc:    n('xc'),
-        yc:    n('yc') || 25,
-        zc:    n('zc'),
-        R:     Math.max(1, n('radius') || 20),
+        c1:     Math.max(0, n('c1')),
+        phi1:   Math.max(0, n('phi1'))   * Math.PI / 180,
+        g1:     Math.max(1, n('gamma1') || 18),
+        c2:     Math.max(0, n('c2')),
+        phi2:   Math.max(0, n('phi2'))   * Math.PI / 180,
+        g2:     Math.max(1, n('gamma2') || 17),
+        theta,                             // polar angle from sphere bottom (degrees)
+        bndDip,                            // dip angle of boundary plane (degrees)
+        // precomputed radians
+        t_rad:  theta   * Math.PI / 180,
+        a_rad:  bndDip  * Math.PI / 180,
+        xc: n('xc'),
+        yc: n('yc') || 25,
+        zc: n('zc'),
+        R:  Math.max(1, n('radius') || 20),
     };
 }
 
 // ─────────────────────────────────────────────────────────────
-//  LAYER ASSIGNMENT  (horizontal boundary plane)
-//  y_bound = yc - R*(1-t)   (constant height, independent of x,z)
-//  Layer 2 occupies [y_slip .. y_bound], Layer 1 above that.
+//  LAYER BOUNDARY HEIGHT at column position x
+//
+//  y_bnd(x) = [Yc − R·cos θ] − tan α · (x − Xc)
+//  Returns -Infinity when θ ≈ 0 (no Layer-2).
 // ─────────────────────────────────────────────────────────────
-function layerSplit(ySlip, yGnd, yBound, p) {
-    let h1, h2, cBase, phiBase;
+function yBndAt(x, p, yBndCenter, tanAlpha) {
+    return yBndCenter - tanAlpha * (x - p.xc);
+}
 
-    if (p.t < 1e-4 || yBound <= ySlip) {
-        // No Layer 2 at this position
-        h2 = 0; h1 = yGnd - ySlip;
-        cBase = p.c1; phiBase = p.phi1;
-    } else if (yBound >= yGnd) {
-        // Entire column is Layer 2
-        h2 = yGnd - ySlip; h1 = 0;
-        cBase = p.c2; phiBase = p.phi2;
-    } else {
-        // Both layers (Layer 2 below, Layer 1 above)
-        h2 = yBound - ySlip;
-        h1 = yGnd   - yBound;
-        cBase = p.c2; phiBase = p.phi2;  // slip surface in Layer 2
+// ─────────────────────────────────────────────────────────────
+//  LAYER SPLIT  — returns h1, h2, cBase, phiBase for one column/slice
+// ─────────────────────────────────────────────────────────────
+function layerSplit(yBnd, ySlip, yGnd, p) {
+    if (!isFinite(yBnd) || yBnd <= ySlip) {
+        return { h1: yGnd - ySlip, h2: 0, cBase: p.c1, phiBase: p.phi1 };
     }
-    return { h1, h2, cBase, phiBase };
+    if (yBnd >= yGnd) {
+        return { h1: 0, h2: yGnd - ySlip, cBase: p.c2, phiBase: p.phi2 };
+    }
+    return { h1: yGnd - yBnd, h2: yBnd - ySlip, cBase: p.c2, phiBase: p.phi2 };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -604,26 +562,33 @@ function layerSplit(ySlip, yGnd, yBound, p) {
 // ─────────────────────────────────────────────────────────────
 function run3D(p) {
     clearColumns();
-    const step   = TERRAIN_SIZE / SEGMENTS;
-    const yBound = p.yc - p.R * (1 - p.t);  // horizontal layer boundary
+    const step = TERRAIN_SIZE / SEGMENTS;
+
+    // Boundary plane precomputed values
+    const hasBnd     = p.theta >= 0.5;
+    const yBndCenter = hasBnd ? p.yc - p.R * Math.cos(p.t_rad) : -Infinity;
+    const tanAlpha   = Math.tan(p.a_rad);
 
     let sumR = 0, sumD = 0, totalW = 0, nCols = 0;
 
-    for (let xi = -TERRAIN_SIZE/2; xi <= TERRAIN_SIZE/2; xi += step) {
-        for (let zi = -TERRAIN_SIZE/2; zi <= TERRAIN_SIZE/2; zi += step) {
+    for (let xi = -TERRAIN_SIZE / 2; xi <= TERRAIN_SIZE / 2; xi += step) {
+        // Boundary y only depends on x (not z) for the tilted-plane model
+        const yBnd_x = hasBnd ? yBndAt(xi, p, yBndCenter, tanAlpha) : -Infinity;
+
+        for (let zi = -TERRAIN_SIZE / 2; zi <= TERRAIN_SIZE / 2; zi += step) {
             const rh2 = (xi - p.xc) ** 2 + (zi - p.zc) ** 2;
             if (rh2 >= p.R * p.R) continue;
 
-            const rh    = Math.sqrt(rh2);
             const ySlip = p.yc - Math.sqrt(p.R * p.R - rh2);
             const yGnd  = getTerrainHeight(xi, zi);
             if (yGnd <= ySlip) continue;
 
-            const { h1, h2, cBase, phiBase } = layerSplit(ySlip, yGnd, yBound, p);
-            const W      = (h1 * p.g1 + h2 * p.g2) * step * step;
-            const sinA   = rh / p.R;
-            const cosA   = Math.sqrt(Math.max(0, 1 - sinA * sinA));
-            const area   = (step * step) / Math.max(cosA, 0.01);
+            const { h1, h2, cBase, phiBase } = layerSplit(yBnd_x, ySlip, yGnd, p);
+            const W    = (h1 * p.g1 + h2 * p.g2) * step * step;
+            const rh   = Math.sqrt(rh2);
+            const sinA = rh / p.R;
+            const cosA = Math.sqrt(Math.max(0, 1 - sinA * sinA));
+            const area = (step * step) / Math.max(cosA, 0.01);
 
             sumR   += cBase * area + W * cosA * Math.tan(phiBase);
             sumD   += W * sinA;
@@ -631,37 +596,39 @@ function run3D(p) {
             nCols++;
 
             // Visualise every 5th column
-            const ix = Math.round((xi + TERRAIN_SIZE/2) / step);
-            const iz = Math.round((zi + TERRAIN_SIZE/2) / step);
+            const ix = Math.round((xi + TERRAIN_SIZE / 2) / step);
+            const iz = Math.round((zi + TERRAIN_SIZE / 2) / step);
             if ((ix + iz) % 5 === 0) {
                 if (h2 > 0.1) {
-                    const m = new THREE.Mesh(new THREE.BoxGeometry(step*.85, h2, step*.85), MAT_L2);
+                    const m = new THREE.Mesh(new THREE.BoxGeometry(step * .85, h2, step * .85), MAT_L2);
                     m.position.set(xi, ySlip + h2 / 2, zi);
                     colGroup.add(m);
                 }
                 if (h1 > 0.1) {
-                    const m = new THREE.Mesh(new THREE.BoxGeometry(step*.85, h1, step*.85), MAT_L1);
-                    m.position.set(xi, (h2 > 0 ? yBound : ySlip) + h1 / 2, zi);
+                    const yL1base = h2 > 0 ? (isFinite(yBnd_x) ? yBnd_x : ySlip) : ySlip;
+                    const m = new THREE.Mesh(new THREE.BoxGeometry(step * .85, h1, step * .85), MAT_L1);
+                    m.position.set(xi, yL1base + h1 / 2, zi);
                     colGroup.add(m);
                 }
             }
         }
     }
 
-    const fs = sumD > 0 ? sumR / sumD : 0;
-    return { fs, sumR, sumD, totalW, nCols };
+    return { fs: sumD > 0 ? sumR / sumD : 0, sumR, sumD, totalW, nCols };
 }
 
 // ─────────────────────────────────────────────────────────────
 //  2D ANALYSIS  (Ordinary Method of Slices at z = zc)
 // ─────────────────────────────────────────────────────────────
 function run2D(p) {
-    const step   = TERRAIN_SIZE / SEGMENTS;
-    const yBound = p.yc - p.R * (1 - p.t);
+    const step       = TERRAIN_SIZE / SEGMENTS;
+    const hasBnd     = p.theta >= 0.5;
+    const yBndCenter = hasBnd ? p.yc - p.R * Math.cos(p.t_rad) : -Infinity;
+    const tanAlpha   = Math.tan(p.a_rad);
 
     let sumR = 0, sumD = 0;
 
-    for (let xi = -TERRAIN_SIZE/2; xi <= TERRAIN_SIZE/2; xi += step) {
+    for (let xi = -TERRAIN_SIZE / 2; xi <= TERRAIN_SIZE / 2; xi += step) {
         const dx2 = (xi - p.xc) ** 2;
         if (dx2 >= p.R * p.R) continue;
 
@@ -669,11 +636,12 @@ function run2D(p) {
         const yGnd  = getTerrainHeight(xi, p.zc);
         if (yGnd <= ySlip) continue;
 
-        const { h1, h2, cBase, phiBase } = layerSplit(ySlip, yGnd, yBound, p);
-        const W    = (h1 * p.g1 + h2 * p.g2) * step;   // per unit width (1 m depth)
-        const sinA = (xi - p.xc) / p.R;                 // signed (negative on uphill side)
+        const yBnd_x = hasBnd ? yBndAt(xi, p, yBndCenter, tanAlpha) : -Infinity;
+        const { h1, h2, cBase, phiBase } = layerSplit(yBnd_x, ySlip, yGnd, p);
+        const W    = (h1 * p.g1 + h2 * p.g2) * step;   // per unit width
+        const sinA = (xi - p.xc) / p.R;                 // signed
         const cosA = Math.sqrt(Math.max(0, 1 - sinA * sinA));
-        const arc  = step / Math.max(cosA, 0.01);       // slice base length
+        const arc  = step / Math.max(cosA, 0.01);
 
         sumR += cBase * arc + W * cosA * Math.tan(phiBase);
         sumD += W * sinA;
@@ -683,71 +651,66 @@ function run2D(p) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  UPDATE SCENE OBJECTS
+//  SCENE UPDATE  (spheres + boundary disk + 2D arc)
 // ─────────────────────────────────────────────────────────────
 function updateScene(p) {
     // Slip sphere
-    [slipSolid, slipWire].forEach(m => {
-        m.position.set(p.xc, p.yc, p.zc);
-        m.scale.set(p.R, p.R, p.R);
-    });
+    [slipSolid, slipWire].forEach(m => { m.position.set(p.xc, p.yc, p.zc); m.scale.set(p.R, p.R, p.R); });
 
     // Layer boundary disk
-    const yBound = p.yc - p.R * (1 - p.t);
-    // Disk radius = R * sqrt(1 - (1-t)^2) = R * sqrt(t*(2-t))
-    const rMax   = p.t > 1e-4 ? p.R * Math.sqrt(Math.max(0, p.t * (2 - p.t))) : 0;
-    const show   = rMax > 0.1;
-    bndDisk.visible = show;
-    bndRing.visible = show;
-    if (show) {
-        bndDisk.position.set(p.xc, yBound, p.zc);
-        bndDisk.scale.set(rMax, rMax, 1);
-        bndRing.position.set(p.xc, yBound, p.zc);
-        bndRing.scale.set(rMax, 1, rMax);
+    // Normal of boundary plane: n̂ = (sin α, cos α, 0)
+    // Intersection circle: d = R·cos α·cos θ,  r_int = √(R²−d²)
+    //                      centre = sphere_centre − d·n̂
+    if (p.theta >= 0.5) {
+        const cA = Math.cos(p.a_rad), sA = Math.sin(p.a_rad);
+        const cT = Math.cos(p.t_rad);
+        const d     = p.R * cA * cT;                                      // signed distance
+        const r_int = Math.sqrt(Math.max(0, p.R * p.R - d * d));         // true radius
+        const bcx   = p.xc - d * sA;
+        const bcy   = p.yc - d * cA;
+
+        bndGroup.visible = r_int > 0.1;
+        bndGroup.position.set(bcx, bcy, p.zc);
+        bndGroup.scale.setScalar(r_int);
+        // Rotate unit-XY circle to have normal (sin α, cos α, 0):
+        // Euler XYZ: first R_x(−π/2) → horizontal, then R_z(−α) → tilted
+        bndGroup.rotation.set(-Math.PI / 2, 0, -p.a_rad);
+    } else {
+        bndGroup.visible = false;
     }
 
-    // 2D arc (lower semicircle at z=zc in world XY plane)
+    // 2D arc (lower semicircle at z = zc, scaled by R)
     arc2D.position.set(p.xc, p.yc, p.zc);
     arc2D.scale.set(p.R, p.R, 1);
 }
 
 // ─────────────────────────────────────────────────────────────
-//  RESULT RENDERING HELPERS
+//  RESULT DISPLAY HELPERS
 // ─────────────────────────────────────────────────────────────
 function fsColor(fs) {
-    if (!fs || fs <= 0) return 'var(--dim)';
-    if (fs < 1.0) return 'var(--danger)';
-    if (fs < 1.2) return '#e67e22';
-    if (fs < 1.5) return 'var(--warn)';
-    return 'var(--success)';
+    if (!fs || fs <= 0 || !isFinite(fs)) return 'var(--dim)';
+    return fs < 1.0 ? 'var(--danger)' : fs < 1.2 ? '#e67e22' : fs < 1.5 ? 'var(--warn)' : 'var(--success)';
 }
-
 function fsLabel(fs) {
-    if (!fs || fs <= 0) return '---';
-    if (fs < 1.0) return '⚠ 危険';
-    if (fs < 1.2) return '△ 要注意';
-    if (fs < 1.5) return '○ 概ね安定';
-    return '◎ 安定';
+    if (!fs || fs <= 0 || !isFinite(fs)) return '---';
+    return fs < 1.0 ? '⚠ 危険' : fs < 1.2 ? '△ 要注意' : fs < 1.5 ? '○ 概ね安定' : '◎ 安定';
 }
-
 function gaugePct(fs) {
-    if (!fs || fs <= 0) return 0;
+    if (!fs || fs <= 0 || !isFinite(fs)) return 0;
     if (fs < 1.0) return fs * 33;
     if (fs < 1.2) return 33 + (fs - 1.0) / 0.2 * 17;
     if (fs < 1.5) return 50 + (fs - 1.2) / 0.3 * 17;
     return Math.min(100, 67 + (fs - 1.5) * 22);
 }
-
-function setCard(valId, gaugeId, statusId, fs) {
+function setCard(valId, gaugeId, stId, fs) {
     const col = fsColor(fs);
-    document.getElementById(valId).textContent   = (fs > 0 && isFinite(fs)) ? fs.toFixed(3) : 'N/A';
-    document.getElementById(valId).style.color   = col;
-    document.getElementById(gaugeId).style.width = gaugePct(fs) + '%';
+    document.getElementById(valId).textContent  = (fs > 0 && isFinite(fs)) ? fs.toFixed(3) : 'N/A';
+    document.getElementById(valId).style.color  = col;
+    document.getElementById(gaugeId).style.width      = gaugePct(fs) + '%';
     document.getElementById(gaugeId).style.background = col;
-    document.getElementById(statusId).textContent = fsLabel(fs);
-    document.getElementById(statusId).style.color = col;
+    document.getElementById(stId).textContent   = fsLabel(fs);
+    document.getElementById(stId).style.color   = col;
 }
-
 function fmt(v) {
     if (!isFinite(v) || v <= 0) return '--';
     if (v >= 1e6) return (v/1e6).toFixed(2) + ' M';
@@ -756,32 +719,28 @@ function fmt(v) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  MAIN ANALYSIS ENTRY POINT
+//  MAIN ANALYSIS
 // ─────────────────────────────────────────────────────────────
 function runAnalysis() {
-    const p     = getParams();
+    const p  = getParams();
     updateScene(p);
-    const r3    = run3D(p);
-    const r2    = run2D(p);
+    const r3 = run3D(p);
+    const r2 = run2D(p);
 
     setCard('fs3d', 'g3d', 'st3d', r3.fs);
     setCard('fs2d', 'g2d', 'st2d', r2.fs);
 
-    // 3D/2D ratio
-    const ratioEl  = document.getElementById('ratio-val');
-    const noteEl   = document.getElementById('ratio-note');
+    const ratioEl = document.getElementById('ratio-val');
+    const noteEl  = document.getElementById('ratio-note');
     if (r3.fs > 0 && r2.fs > 0 && isFinite(r3.fs) && isFinite(r2.fs)) {
         const ratio = r3.fs / r2.fs;
         ratioEl.textContent = ratio.toFixed(3);
         ratioEl.style.color = ratio >= 1.0 ? 'var(--success)' : 'var(--warn)';
         noteEl.textContent  = ratio >= 1.0 ? '3D効果あり（端部効果）' : '3D < 2D（形状依存）';
     } else {
-        ratioEl.textContent = '--';
-        ratioEl.style.color = 'var(--dim)';
-        noteEl.textContent  = '';
+        ratioEl.textContent = '--'; ratioEl.style.color = 'var(--dim)'; noteEl.textContent = '';
     }
 
-    // Stats
     document.getElementById('st-resist').textContent = fmt(r3.sumR)   + ' kN';
     document.getElementById('st-drive').textContent  = fmt(r3.sumD)   + ' kN';
     document.getElementById('st-weight').textContent = fmt(r3.totalW) + ' kN';
@@ -789,20 +748,21 @@ function runAnalysis() {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  DEBOUNCE
+//  DEBOUNCE / EVENT WIRING
 // ─────────────────────────────────────────────────────────────
 let _timer = null;
-function scheduleUpdate() {
-    clearTimeout(_timer);
-    _timer = setTimeout(runAnalysis, 150);
-}
+function scheduleUpdate() { clearTimeout(_timer); _timer = setTimeout(runAnalysis, 150); }
 
-// ─────────────────────────────────────────────────────────────
-//  EVENT WIRING
-// ─────────────────────────────────────────────────────────────
 document.querySelectorAll('input[type="number"]').forEach(el =>
     el.addEventListener('input', () => {
-        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        // Clear chip active state only for the layer whose input changed
+        const id = el.id;
+        const layer = (id.endsWith('1') && !id.startsWith('phi')) ||
+                      id === 'c1' || id === 'phi1' || id === 'gamma1' ? '1' :
+                      id === 'c2' || id === 'phi2' || id === 'gamma2' ? '2' : null;
+        if (layer) {
+            document.querySelectorAll(`.chip[data-layer="${layer}"]`).forEach(c => c.classList.remove('active'));
+        }
         scheduleUpdate();
     })
 );
@@ -827,7 +787,6 @@ window.addEventListener('resize', () => {
     renderer.setSize(vpW, vpH);
 });
 
-// Initial run
 runAnalysis();
 </script>
 
