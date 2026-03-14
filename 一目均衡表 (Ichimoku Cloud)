@@ -44,16 +44,16 @@ fill(p_span_a, p_span_b, color=span_a > span_b ? span_a_color : span_b_color, ti
 if show_labels and bar_index % label_interval == 0
     // 転換線ラベル
     label.new(bar_index, tenkan, "転換線",
-         style=label.style_none, textcolor=tenkan_color, size=size.small)
+         style=label.style_none, textcolor=tenkan_color, size=size.normal)
     // 基準線ラベル
     label.new(bar_index, kijun, "基準線",
-         style=label.style_none, textcolor=kijun_color, size=size.small)
+         style=label.style_none, textcolor=kijun_color, size=size.normal)
     // 遅行スパンラベル
     label.new(bar_index - chikou_offset, close, "遅行スパン",
-         style=label.style_none, textcolor=chikou_color, size=size.small)
+         style=label.style_none, textcolor=chikou_color, size=size.normal)
     // 先行スパンAラベル
     label.new(bar_index + displacement, span_a, "先行スパンA",
-         style=label.style_none, textcolor=#00897b, size=size.small)
+         style=label.style_none, textcolor=#00897b, size=size.normal)
     // 先行スパンBラベル
     label.new(bar_index + displacement, span_b, "先行スパンB",
-         style=label.style_none, textcolor=#ff5252, size=size.small)
+         style=label.style_none, textcolor=#ff5252, size=size.normal)
