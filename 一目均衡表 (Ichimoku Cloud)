@@ -1,5 +1,5 @@
 //@version=5
-indicator("一目均衡表 (Ichimoku Cloud)", overlay=true, max_lines_count=500)
+indicator("一目均衡表 (Ichimoku Cloud)", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // --- パラメータ設定 ---
 tenkan_len  = input.int(9,  "転換線期間")
@@ -14,6 +14,10 @@ kijun_color   = input.color(#991515, "基準線の色")
 chikou_color  = input.color(#459915, "遅行スパンの色")
 span_a_color  = input.color(color.new(#00897b, 80), "先行スパンA（雲上）の色")
 span_b_color  = input.color(color.new(#ff5252, 80), "先行スパンB（雲下）の色")
+
+// --- ラベル表示設定 ---
+show_labels   = input.bool(true, "線の名前ラベルを表示")
+label_interval = input.int(20, "ラベル表示間隔（本数）", minval=5, maxval=100)
 
 // --- 一目均衡表の計算 ---
 donchian(len) => math.avg(ta.lowest(len), ta.highest(len))
@@ -35,3 +39,21 @@ plot(close, title="遅行スパン", offset=-chikou_offset, color=chikou_color, 
 p_span_a = plot(span_a, title="先行スパンA", offset=displacement, color=color.new(#00897b, 0), linewidth=1)
 p_span_b = plot(span_b, title="先行スパンB", offset=displacement, color=color.new(#ff5252, 0), linewidth=1)
 fill(p_span_a, p_span_b, color=span_a > span_b ? span_a_color : span_b_color, title="雲")
+
+// --- 線の名前ラベル表示 ---
+if show_labels and bar_index % label_interval == 0
+    // 転換線ラベル
+    label.new(bar_index, tenkan, "転換線",
+         style=label.style_none, textcolor=tenkan_color, size=size.small)
+    // 基準線ラベル
+    label.new(bar_index, kijun, "基準線",
+         style=label.style_none, textcolor=kijun_color, size=size.small)
+    // 遅行スパンラベル
+    label.new(bar_index - chikou_offset, close, "遅行スパン",
+         style=label.style_none, textcolor=chikou_color, size=size.small)
+    // 先行スパンAラベル
+    label.new(bar_index + displacement, span_a, "先行スパンA",
+         style=label.style_none, textcolor=#00897b, size=size.small)
+    // 先行スパンBラベル
+    label.new(bar_index + displacement, span_b, "先行スパンB",
+         style=label.style_none, textcolor=#ff5252, size=size.small)
