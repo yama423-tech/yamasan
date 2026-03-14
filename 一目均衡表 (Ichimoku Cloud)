@@ -55,7 +55,12 @@ sanyaku_gyakuten = not cond_tenkan_above and cond_below_cloud and cond_chikou_be
 
 // ==================== アラート ====================
 trend_change = (sanyaku_kouten and not sanyaku_kouten[1]) or (sanyaku_gyakuten and not sanyaku_gyakuten[1])
+price_cross_below_kijun = ta.crossunder(close, kijun)
+price_cross_below_tenkan = ta.crossunder(close, tenkan)
+
 alertcondition(trend_change, title="トレンド転換", message="一目均衡表：トレンド転換が発生しました")
+alertcondition(price_cross_below_kijun, title="基準線を下抜け", message="一目均衡表：価格が基準線を下抜けました")
+alertcondition(price_cross_below_tenkan, title="転換線を下抜け", message="一目均衡表：価格が転換線を下抜けました")
 
 // ==================== 描画：メインライン ====================
 plot(tenkan, title="転換線", color=tenkan_color, linewidth=1)
@@ -81,7 +86,7 @@ if show_name_labels and bar_index % label_interval == 0
 
 // ==================== 描画：トレンド状態テーブル（右上）====================
 if show_trend_info and barstate.islast
-    var tbl = table.new(position.top_right, 2, 9, bgcolor=color.new(#1e1e1e, 10), border_width=1)
+    var tbl = table.new(position.top_right, 2, 10, bgcolor=color.new(#1e1e1e, 10), border_width=1)
 
     // ヘッダー
     table.cell(tbl, 0, 0, "チェック項目", text_color=color.white, text_size=size.normal, bgcolor=color.new(#333333, 0))
@@ -92,45 +97,51 @@ if show_trend_info and barstate.islast
     table.cell(tbl, 1, 1, cond_tenkan_above ? "◯ 買い優勢" : "✕ 売り優勢",
          text_color=cond_tenkan_above ? #4caf50 : #ff5252, text_size=size.normal)
 
-    // ② 価格 vs 雲
+    // ② 価格 vs 転換線・基準線
+    price_vs_lines = close > tenkan and close > kijun ? "◯ 両線の上" : close < tenkan and close < kijun ? "✕ 両線の下" : close > kijun ? "△ 基準線の上" : close < kijun ? "▼ 基準線割れ" : "△ 中間"
+    pvl_clr = close > tenkan and close > kijun ? #4caf50 : close < tenkan and close < kijun ? #ff5252 : close < kijun ? #ff5252 : #ff9800
+    table.cell(tbl, 0, 2, "価格 vs 転換・基準", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 2, price_vs_lines, text_color=pvl_clr, text_size=size.normal)
+
+    // ③ 価格 vs 雲
     pos_vs_cloud = close > cloud_top ? "◯ 雲の上" : close < cloud_bottom ? "✕ 雲の下" : "△ 雲の中"
     clr_vs_cloud = close > cloud_top ? #4caf50 : close < cloud_bottom ? #ff5252 : #ff9800
-    table.cell(tbl, 0, 2, "価格と雲の位置", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 2, pos_vs_cloud, text_color=clr_vs_cloud, text_size=size.normal)
+    table.cell(tbl, 0, 3, "価格と雲の位置", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 3, pos_vs_cloud, text_color=clr_vs_cloud, text_size=size.normal)
 
-    // ③ 遅行スパン
-    table.cell(tbl, 0, 3, "遅行スパン > 過去価格", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 3, cond_chikou_above ? "◯ 上回る" : "✕ 下回る",
+    // ④ 遅行スパン
+    table.cell(tbl, 0, 4, "遅行スパン > 過去価格", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 4, cond_chikou_above ? "◯ 上回る" : "✕ 下回る",
          text_color=cond_chikou_above ? #4caf50 : #ff5252, text_size=size.normal)
 
-    // ④ 雲の色（未来の方向性）
+    // ⑤ 雲の色（未来の方向性）
     future_cloud_bull = span_a > span_b
-    table.cell(tbl, 0, 4, "雲の色（方向性）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 4, future_cloud_bull ? "◯ 上昇雲" : "✕ 下降雲",
+    table.cell(tbl, 0, 5, "雲の色（方向性）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 5, future_cloud_bull ? "◯ 上昇雲" : "✕ 下降雲",
          text_color=future_cloud_bull ? #4caf50 : #ff5252, text_size=size.normal)
 
-    // ⑤ トレンド（基準線の方向）
+    // ⑥ トレンド（基準線の方向）
     kijun_rising  = kijun > kijun[1]
     kijun_falling = kijun < kijun[1]
     trend_status = kijun_rising ? "◯ 上昇トレンド" : kijun_falling ? "✕ 下降トレンド" : "― 横ばい"
     trend_clr = kijun_rising ? #4caf50 : kijun_falling ? #ff5252 : color.gray
-    table.cell(tbl, 0, 5, "トレンド（基準線）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 5, trend_status, text_color=trend_clr, text_size=size.normal)
+    table.cell(tbl, 0, 6, "トレンド（基準線）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 6, trend_status, text_color=trend_clr, text_size=size.normal)
 
-    // ⑥ 出来高
+    // ⑦ 出来高
     vol_status = vol_surge ? "◯ 平均の" + str.tostring(volume / vol_ma, "#.#") + "倍" : "― 平常"
-    table.cell(tbl, 0, 6, "出来高（vs MA" + str.tostring(vol_ma_len) + "）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 6, vol_status, text_color=vol_surge ? #4caf50 : color.gray, text_size=size.normal)
+    table.cell(tbl, 0, 7, "出来高（vs MA" + str.tostring(vol_ma_len) + "）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 7, vol_status, text_color=vol_surge ? #4caf50 : color.gray, text_size=size.normal)
 
-    // ⑦ モメンタム
+    // ⑧ モメンタム
     mom_status = mom_up ? "◯ 上昇 +" + str.tostring(mom, "#.##") : mom_down ? "✕ 下降 " + str.tostring(mom, "#.##") : "― 横ばい"
     mom_clr = mom_up ? #4caf50 : mom_down ? #ff5252 : color.gray
-    table.cell(tbl, 0, 7, "勢い（" + str.tostring(mom_len) + "本前比）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 7, mom_status, text_color=mom_clr, text_size=size.normal)
+    table.cell(tbl, 0, 8, "勢い（" + str.tostring(mom_len) + "本前比）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 8, mom_status, text_color=mom_clr, text_size=size.normal)
 
-    // ⑧ 総合判定
-    table.cell(tbl, 0, 8, "━━ 総合判定 ━━", text_color=#ff9800, text_size=size.normal, bgcolor=color.new(#333333, 0))
+    // ⑨ 総合判定
+    table.cell(tbl, 0, 9, "━━ 総合判定 ━━", text_color=#ff9800, text_size=size.normal, bgcolor=color.new(#333333, 0))
     verdict = sanyaku_kouten ? "★ 三役好転（強い買い）" : sanyaku_gyakuten ? "★ 三役逆転（強い売り）" : "様子見"
     v_color = sanyaku_kouten ? #4caf50 : sanyaku_gyakuten ? #ff5252 : #ff9800
-    table.cell(tbl, 1, 8, verdict, text_color=v_color, text_size=size.normal, bgcolor=color.new(#333333, 0))
+    table.cell(tbl, 1, 9, verdict, text_color=v_color, text_size=size.normal, bgcolor=color.new(#333333, 0))
 
