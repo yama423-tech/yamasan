@@ -1,0 +1,37 @@
+//@version=5
+indicator("一目均衡表 (Ichimoku Cloud)", overlay=true, max_lines_count=500)
+
+// --- パラメータ設定 ---
+tenkan_len  = input.int(9,  "転換線期間")
+kijun_len   = input.int(26, "基準線期間")
+span_b_len  = input.int(52, "先行スパンB期間")
+displacement = input.int(26, "先行スパン表示位置（右シフト）")
+chikou_offset = input.int(26, "遅行スパン表示位置（左シフト）")
+
+// --- 色設定 ---
+tenkan_color  = input.color(#0496ff, "転換線の色")
+kijun_color   = input.color(#991515, "基準線の色")
+chikou_color  = input.color(#459915, "遅行スパンの色")
+span_a_color  = input.color(color.new(#00897b, 80), "先行スパンA（雲上）の色")
+span_b_color  = input.color(color.new(#ff5252, 80), "先行スパンB（雲下）の色")
+
+// --- 一目均衡表の計算 ---
+donchian(len) => math.avg(ta.lowest(len), ta.highest(len))
+
+tenkan = donchian(tenkan_len)   // 転換線
+kijun  = donchian(kijun_len)    // 基準線
+span_a = math.avg(tenkan, kijun) // 先行スパンA
+span_b = donchian(span_b_len)    // 先行スパンB
+
+// --- 描画 ---
+// 転換線・基準線
+plot(tenkan, title="転換線", color=tenkan_color, linewidth=1)
+plot(kijun,  title="基準線", color=kijun_color,   linewidth=2)
+
+// 遅行スパン（現在の終値を26期間前に表示）
+plot(close, title="遅行スパン", offset=-chikou_offset, color=chikou_color, linewidth=1)
+
+// 先行スパンA・B（26期間先に表示）＋雲の塗りつぶし
+p_span_a = plot(span_a, title="先行スパンA", offset=displacement, color=color.new(#00897b, 0), linewidth=1)
+p_span_b = plot(span_b, title="先行スパンB", offset=displacement, color=color.new(#ff5252, 0), linewidth=1)
+fill(p_span_a, p_span_b, color=span_a > span_b ? span_a_color : span_b_color, title="雲")
