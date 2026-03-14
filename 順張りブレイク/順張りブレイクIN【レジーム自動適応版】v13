@@ -1,0 +1,416 @@
+//@version=6
+indicator("順張りブレイクIN【レジーム自動適応版】v13", overlay=true, max_labels_count=500)
+
+// ===== ユーティリティ =====
+f2(x) => na(x) ? "—" : str.tostring(math.round(x * 100.0) / 100.0)
+
+// ============================================================
+// 1. トレードスタイル選択
+// ============================================================
+group_style = "トレードスタイル"
+styleInput = input.string("Swing (スイング)", "スタイル", options=[
+  "Short (短期デイトレ)", "Swing (スイング)", "Mid (中期)", "Long (長期)"], group=group_style)
+
+// ============================================================
+// 2. 足（タイムフレーム）自動調整
+// ============================================================
+// timeframe.multiplier × 足種別で「基準倍率」を算出
+// 日足=1.0 を基準に、短い足ほど期間を短く、長い足ほど長くする
+f_tfScale() =>
+    float m = timeframe.multiplier
+    float scale = 1.0
+    if timeframe.isseconds
+        scale := m <= 30 ? 0.3 : 0.4
+    else if timeframe.isintraday
+        scale := m <= 3  ? 0.4 :
+                 m <= 5  ? 0.5 :
+                 m <= 15 ? 0.65 :
+                 m <= 30 ? 0.75 :
+                 m <= 60 ? 0.85 : 0.95
+    else if timeframe.isweekly
+        scale := 1.5
+    else if timeframe.ismonthly
+        scale := 2.5
+    else
+        scale := 1.0   // 日足
+    scale
+
+tfScale = f_tfScale()
+
+// ============================================================
+// 3. スタイル別ベースパラメータ
+// ============================================================
+// [MACD Fast, MACD Slow, ADX閾値, SL倍率, TP倍率, 出来高使用, Donchian長, IB本数]
+var float BASE_FAST    = 12.0
+var float BASE_SLOW    = 26.0
+var float BASE_ADXTH   = 20.0
+var float BASE_SL      = 2.0
+var float BASE_TP      = 1.5
+var bool  BASE_USEVOL  = true
+var int   BASE_DONCH   = 20
+var int   BASE_IB      = 4
+
+switch styleInput
+    "Short (短期デイトレ)" =>
+        BASE_FAST   := 9.0
+        BASE_SLOW   := 21.0
+        BASE_ADXTH  := 22.0
+        BASE_SL     := 1.5
+        BASE_TP     := 1.2
+        BASE_USEVOL := true
+        BASE_DONCH  := 10
+        BASE_IB     := 3
+    "Swing (スイング)" =>
+        BASE_FAST   := 12.0
+        BASE_SLOW   := 26.0
+        BASE_ADXTH  := 20.0
+        BASE_SL     := 2.0
+        BASE_TP     := 1.5
+        BASE_USEVOL := true
+        BASE_DONCH  := 20
+        BASE_IB     := 4
+    "Mid (中期)" =>
+        BASE_FAST   := 15.0
+        BASE_SLOW   := 30.0
+        BASE_ADXTH  := 18.0
+        BASE_SL     := 2.5
+        BASE_TP     := 2.0
+        BASE_USEVOL := true
+        BASE_DONCH  := 30
+        BASE_IB     := 5
+    "Long (長期)" =>
+        BASE_FAST   := 20.0
+        BASE_SLOW   := 40.0
+        BASE_ADXTH  := 15.0
+        BASE_SL     := 3.0
+        BASE_TP     := 3.0
+        BASE_USEVOL := false
+        BASE_DONCH  := 50
+        BASE_IB     := 6
+
+// 足自動調整を適用（最低値をクランプ）
+p_fastLen = math.max(2, math.round(BASE_FAST * tfScale))
+p_slowLen = math.max(5, math.round(BASE_SLOW * tfScale))
+p_donchLen = math.max(3, math.round(BASE_DONCH * tfScale))
+p_ibBars  = math.max(2, math.round(BASE_IB * tfScale))
+
+// ============================================================
+// 4. レジーム（相場局面）自動検出
+// ============================================================
+group_regime = "レジーム検出設定"
+regimeLookback = input.int(40, "レジーム判定期間", minval=10, maxval=100, group=group_regime)
+crashDropPct   = input.float(12.0, "暴落判定：高値からの下落率(%)", step=0.5, group=group_regime)
+highVolMult    = input.float(1.8, "高ボラ判定：ATR倍率", step=0.1, group=group_regime)
+
+// --- レジーム判定ロジック ---
+// ATR正規化（ボラティリティ指標）
+atr14 = ta.atr(14)
+atrNorm = atr14 / close * 100  // ATR%
+
+// ボラティリティの履歴中央値
+atrMedian = ta.percentile_nearest_rank(atrNorm, regimeLookback, 50)
+
+// トレンド判定用SMA
+sma20 = ta.sma(close, 20)
+sma20Prev = sma20[5]
+smaSlope = (sma20 - sma20Prev) / sma20Prev * 100  // 5本前との変化率%
+
+// 高値からの下落率
+highestRecent = ta.highest(high, regimeLookback)
+drawdownPct = (highestRecent - close) / highestRecent * 100
+
+// レジーム判定: 0=通常, 1=暴落, 2=下降, 3=高ボラ, 4=上昇
+f_detectRegime() =>
+    int regime = 0
+    if drawdownPct >= crashDropPct and atrNorm > atrMedian * highVolMult
+        regime := 1  // 暴落
+    else if smaSlope < -1.0 and close < sma20
+        regime := 2  // 下降トレンド
+    else if atrNorm > atrMedian * highVolMult
+        regime := 3  // 高ボラティリティ
+    else if smaSlope > 0.5 and close > sma20
+        regime := 4  // 上昇トレンド
+    else
+        regime := 0  // 通常
+    regime
+
+currentRegime = f_detectRegime()
+
+// レジーム名
+regimeName = switch currentRegime
+    1 => "CRASH"
+    2 => "DOWN"
+    3 => "HIGH VOL"
+    4 => "UPTREND"
+    => "NORMAL"
+
+regimeColor = switch currentRegime
+    1 => color.red
+    2 => color.orange
+    3 => color.yellow
+    4 => color.lime
+    => color.gray
+
+// ============================================================
+// 5. レジームに応じた係数・しきい値の自動調整
+// ============================================================
+// 感度係数（SL/TP倍率に加算）、ADX閾値調整、RSI上限調整
+float regimeCoefAdj  = 0.0   // SL/TP倍率に加算
+float regimeAdxAdj   = 0.0   // ADX閾値に加算（マイナス=緩和）
+float regimeRsiAdj   = 0.0   // RSI上限に加算（プラス=緩和）
+float regimeDispAdj  = 0.0   // 乖離率上限に加算
+
+switch currentRegime
+    1 =>  // 暴落: 係数+0.25、しきい値緩和 → シグナルが出やすくチャンスを拾う
+        regimeCoefAdj  := 0.25
+        regimeAdxAdj   := -5.0
+        regimeRsiAdj   := 10.0
+        regimeDispAdj  := 5.0
+    2 =>  // 下降: 少し緩和（反発狙い）
+        regimeCoefAdj  := 0.15
+        regimeAdxAdj   := -3.0
+        regimeRsiAdj   := 5.0
+        regimeDispAdj  := 3.0
+    3 =>  // 高ボラ: SL拡大、しきい値やや緩和
+        regimeCoefAdj  := 0.20
+        regimeAdxAdj   := -2.0
+        regimeRsiAdj   := 5.0
+        regimeDispAdj  := 3.0
+    4 =>  // 上昇トレンド: 係数-0.05、しきい値厳格化 → 高値掴み防止
+        regimeCoefAdj  := -0.05
+        regimeAdxAdj   := 3.0
+        regimeRsiAdj   := -5.0
+        regimeDispAdj  := -3.0
+    =>    // 通常: 調整なし
+        regimeCoefAdj  := 0.0
+        regimeAdxAdj   := 0.0
+        regimeRsiAdj   := 0.0
+        regimeDispAdj  := 0.0
+
+// 最終パラメータ算出
+p_slMult  = math.max(0.5, BASE_SL + regimeCoefAdj)
+p_tp1Mult = math.max(0.5, BASE_TP + regimeCoefAdj)
+p_adxTh   = math.max(5.0, BASE_ADXTH + regimeAdxAdj)
+p_useVol  = BASE_USEVOL
+
+// ============================================================
+// 6. 過熱感ガード設定（レジーム調整付き）
+// ============================================================
+group_filter = "★過熱感・高値掴み防止"
+useRsiFilter  = input.bool(true, "RSI過熱ガードを使う", group=group_filter)
+baseRsiMax    = input.int(80, "RSI上限 (ベース)", minval=50, maxval=100, group=group_filter)
+useDispFilter = input.bool(true, "乖離率ガードを使う", group=group_filter)
+baseDispMax   = input.float(15.0, "25日線乖離率上限(%)", step=0.5, group=group_filter)
+adxMax        = input.int(65, "ADX過熱上限", group=group_filter)
+
+// レジーム調整を反映
+rsiMaxAdj  = math.min(95.0, math.max(50.0, baseRsiMax + regimeRsiAdj))
+dispMaxAdj = math.max(3.0, baseDispMax + regimeDispAdj)
+
+// ============================================================
+// 7. 共通設定
+// ============================================================
+group_common = "共通設定"
+isIntraday = timeframe.isintraday
+vwapThPct = input.float(100.0, "VWAP判定比率(%)", step=0.1, group=group_common)
+useTrail  = input.bool(true, "トレーリングストップを使用", group=group_common)
+
+// 手動オーバーライド
+group_man = "手動オーバーライド (上級者向け)"
+manOverride  = input.bool(false, "手動パラメータで上書きする", group=group_man)
+man_FastLen  = input.int(12, "MACD Fast", group=group_man)
+man_SlowLen  = input.int(26, "MACD Slow", group=group_man)
+man_AdxTh    = input.int(20, "ADX閾値", group=group_man)
+man_SlMult   = input.float(2.0, "SL ATR倍率", group=group_man)
+man_TpMult   = input.float(1.5, "TP ATR倍率", group=group_man)
+man_UseVol   = input.bool(true, "出来高判定を使う", group=group_man)
+man_DonchLen = input.int(20, "高値ブレイク期間", group=group_man)
+
+// 手動オーバーライド適用
+fin_fastLen  = manOverride ? man_FastLen  : p_fastLen
+fin_slowLen  = manOverride ? man_SlowLen  : p_slowLen
+fin_adxTh    = manOverride ? man_AdxTh    : p_adxTh
+fin_slMult   = manOverride ? man_SlMult   : p_slMult
+fin_tp1Mult  = manOverride ? man_TpMult   : p_tp1Mult
+fin_useVol   = manOverride ? man_UseVol   : p_useVol
+fin_donchLen = manOverride ? man_DonchLen : p_donchLen
+fin_ibBars   = manOverride ? 4            : p_ibBars
+
+// 表示設定
+group_disp = "表示デザイン"
+showLegend = input.bool(true, "情報パネルを表示", group=group_disp)
+legPos     = input.string("Bottom Left", "パネル位置", options=["Top Right", "Bottom Right", "Bottom Left"], group=group_disp)
+
+// ============================================================
+// 8. ロジック分岐：日足 vs デイトレ（足自動調整済み）
+// ============================================================
+var float resLine = na
+
+if isIntraday
+    newDay = ta.change(time("D")) != 0
+    var int barsInSession = 0
+    var float ibHigh = na
+
+    if newDay
+        ibHigh := na
+        barsInSession := 0
+    else if barstate.isconfirmed
+        barsInSession += 1
+
+    if na(ibHigh)
+        ibHigh := high
+    if barstate.isconfirmed and barsInSession <= fin_ibBars
+        ibHigh := math.max(ibHigh, high)
+
+    if barsInSession > fin_ibBars
+        resLine := ibHigh
+    else
+        resLine := na
+else
+    resLine := ta.highest(high, fin_donchLen)[1]
+
+// ============================================================
+// 9. テクニカル指標計算
+// ============================================================
+vwapVal = ta.vwap(hlc3)
+
+// 出来高条件
+volAvg  = ta.sma(volume, 60)
+volCond = fin_useVol ? (volume > volAvg * 1.5) : true
+
+// MACD
+[macdLine, sigLine, _] = ta.macd(close, fin_fastLen, fin_slowLen, 9)
+macdOK = macdLine > sigLine
+
+// ADX/DMI
+[diplus, diminus, adxVal] = ta.dmi(14, 14)
+adxOK = adxVal > fin_adxTh and adxVal < adxMax
+
+// VWAP
+vwapOK = close > vwapVal * (vwapThPct / 100.0)
+
+// 過熱感フィルター（レジーム調整済み）
+rsiVal  = ta.rsi(close, 14)
+rsiSafe = useRsiFilter ? (rsiVal < rsiMaxAdj) : true
+
+sma25   = ta.sma(close, 25)
+dispVal = ((close - sma25) / sma25) * 100
+dispSafe = useDispFilter ? (dispVal < dispMaxAdj) : true
+
+// ブレイク判定
+breakOK = not na(resLine) and close > resLine and close[1] <= resLine[1]
+
+// ============================================================
+// 10. 総合エントリー判定
+// ============================================================
+entryRaw = volCond and macdOK and vwapOK and adxOK and rsiSafe and dispSafe and breakOK
+entryConfirmed = entryRaw and barstate.isconfirmed
+
+// ============================================================
+// 11. ポジション管理（ATRベース・レジーム調整済み）
+// ============================================================
+var float entryPrice = na
+var float dynamicSL  = na
+atr = ta.atr(14)
+
+if entryConfirmed and na(entryPrice)
+    entryPrice := close
+    dynamicSL  := entryPrice - (atr * fin_slMult)
+    alert("【ENTRY】" + syminfo.ticker + " @" + str.tostring(close) + " Regime:" + regimeName, alert.freq_once_per_bar_close)
+
+tp1 = na(entryPrice) ? na : entryPrice + (atr * fin_tp1Mult)
+tp2 = na(entryPrice) ? na : entryPrice + (atr * fin_tp1Mult * 2.0)
+
+if not na(entryPrice) and useTrail
+    trailVal = close - (atr * fin_slMult)
+    dynamicSL := math.max(dynamicSL, trailVal)
+
+tp1Hit = not na(tp1) and close >= tp1 and barstate.isconfirmed
+tp2Hit = not na(tp2) and close >= tp2 and barstate.isconfirmed
+slHit  = not na(dynamicSL) and close <= dynamicSL and barstate.isconfirmed
+
+if tp1Hit or tp2Hit or slHit
+    entryPrice := na
+    dynamicSL  := na
+
+// ============================================================
+// 12. プロット
+// ============================================================
+plot(resLine, "Break Line", color=color.new(color.orange, 0), linewidth=2)
+plot(vwapVal, "VWAP", color=color.new(color.teal, 80))
+
+plot(tp1, "TP1", color=color.green, style=plot.style_circles)
+plot(dynamicSL, "SL", color=color.red, style=plot.style_cross)
+
+if entryConfirmed
+    label.new(bar_index, low,
+      text="IN [" + regimeName + "]\nTP:" + f2(tp1),
+      color=color.lime, textcolor=color.black,
+      style=label.style_label_up, yloc=yloc.belowbar)
+
+plotshape(tp1Hit, "TP1", shape.labeldown, location.abovebar, color.green, textcolor=color.white, text="TP1")
+plotshape(slHit, "STOP", shape.labeldown, location.abovebar, color.red, textcolor=color.white, text="STOP")
+
+// レジーム背景色（薄く表示）
+bgcolor(currentRegime == 1 ? color.new(color.red, 92) :
+        currentRegime == 2 ? color.new(color.orange, 94) :
+        currentRegime == 3 ? color.new(color.yellow, 94) :
+        currentRegime == 4 ? color.new(color.lime, 95) :
+        na)
+
+// ============================================================
+// 13. 情報パネル
+// ============================================================
+var table panel = na
+posInput = legPos == "Top Right" ? position.top_right : legPos == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+if showLegend
+    if barstate.isfirst
+        panel := table.new(posInput, 2, 10, bgcolor=color.new(color.black, 40), border_width=1)
+
+    if barstate.islast
+        modeStr = isIntraday ? "DayTrade (IB)" : "Swing (Daily)"
+        tfStr   = timeframe.period
+
+        // Row 0: バージョン・モード
+        table.cell(panel, 0, 0, "v13 Regime", text_color=color.yellow, text_halign=text.align_left)
+        table.cell(panel, 1, 0, modeStr + " [" + tfStr + "]", text_color=color.yellow, text_size=size.small)
+
+        // Row 1: スタイル
+        table.cell(panel, 0, 1, "Style", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 1, styleInput, text_color=color.aqua)
+
+        // Row 2: レジーム
+        table.cell(panel, 0, 2, "Regime", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 2, regimeName, text_color=regimeColor)
+
+        // Row 3: TF Scale
+        table.cell(panel, 0, 3, "TF Scale", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 3, f2(tfScale) + "x | MACD " + str.tostring(fin_fastLen) + "/" + str.tostring(fin_slowLen), text_color=color.silver)
+
+        // Row 4: 出来高
+        table.cell(panel, 0, 4, "Vol Check", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 4, fin_useVol ? (volCond ? "OK" : "NG") : "OFF", text_color = (not fin_useVol or volCond) ? color.green : color.red)
+
+        // Row 5: トレンド
+        table.cell(panel, 0, 5, "Trend (ADX/MACD)", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 5, (adxOK and macdOK) ? "OK" : "NG", text_color = (adxOK and macdOK) ? color.green : color.red)
+
+        // Row 6: ガード
+        guardOK = rsiSafe and dispSafe
+        table.cell(panel, 0, 6, "Guard (RSI/Disp)", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 6, guardOK ? "Safe" : "STOP", text_color = guardOK ? color.green : color.red)
+
+        // Row 7: ブレイクライン
+        lineVal = na(resLine) ? "---" : f2(resLine)
+        table.cell(panel, 0, 7, "Break Line", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 7, lineVal + (breakOK ? " BREAK!" : ""), text_color = breakOK ? color.green : color.white)
+
+        // Row 8: SL/TP倍率（レジーム調整後）
+        table.cell(panel, 0, 8, "SL/TP Mult", text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 8, f2(fin_slMult) + " / " + f2(fin_tp1Mult), text_color=color.silver)
+
+        // Row 9: ポジション
+        posText = na(dynamicSL) ? "No Pos" : "SL:" + f2(dynamicSL)
+        table.cell(panel, 0, 9, "Close: " + f2(close), text_color=color.white, text_halign=text.align_left)
+        table.cell(panel, 1, 9, posText, text_color=color.white)
