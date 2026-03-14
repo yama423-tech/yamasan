@@ -82,32 +82,32 @@ if show_signals
     // 転換線×基準線クロス → Buy / Sell
     if buy_cross
         label.new(bar_index, low, "Buy\n転換↑基準",
-             style=label.style_label_up, color=color.new(#00bcd4, 0),
-             textcolor=color.white, size=size.normal)
+             style=label.style_label_up, color=color.new(#00bcd4, 70),
+             textcolor=color.new(color.white, 30), size=size.normal)
     if sell_cross
         label.new(bar_index, high, "Sell\n転換↓基準",
-             style=label.style_label_down, color=color.new(#ff5252, 0),
-             textcolor=color.white, size=size.normal)
+             style=label.style_label_down, color=color.new(#ff5252, 70),
+             textcolor=color.new(color.white, 30), size=size.normal)
 
     // 雲ブレイク
     if cloud_break_up
         label.new(bar_index, low, "雲抜け↑\nBreakout",
-             style=label.style_label_up, color=color.new(#4caf50, 0),
-             textcolor=color.white, size=size.normal)
+             style=label.style_label_up, color=color.new(#4caf50, 70),
+             textcolor=color.new(color.white, 30), size=size.normal)
     if cloud_break_down
         label.new(bar_index, high, "雲割れ↓\nBreakdown",
-             style=label.style_label_down, color=color.new(#e91e63, 0),
-             textcolor=color.white, size=size.normal)
+             style=label.style_label_down, color=color.new(#e91e63, 70),
+             textcolor=color.new(color.white, 30), size=size.normal)
 
     // 三役好転・三役逆転の発生タイミング
     if sanyaku_kouten and not sanyaku_kouten[1]
         label.new(bar_index, low, "★三役好転★\n強い買い",
-             style=label.style_label_up, color=color.new(#ff9800, 0),
-             textcolor=color.white, size=size.large)
+             style=label.style_label_up, color=color.new(#ff9800, 60),
+             textcolor=color.new(color.white, 10), size=size.large)
     if sanyaku_gyakuten and not sanyaku_gyakuten[1]
         label.new(bar_index, high, "★三役逆転★\n強い売り",
-             style=label.style_label_down, color=color.new(#9c27b0, 0),
-             textcolor=color.white, size=size.large)
+             style=label.style_label_down, color=color.new(#9c27b0, 60),
+             textcolor=color.new(color.white, 10), size=size.large)
 
 // ==================== 描画：SL（損切りライン）====================
 // 基準線 = 中期の均衡点 → 損切り目安として最も一般的
@@ -115,7 +115,7 @@ if show_signals
 plot(show_sl ? kijun : na, title="SL①基準線", color=color.new(kijun_color, 50),
      linewidth=1, style=plot.style_cross)
 plot(show_sl ? cloud_bottom : na, title="SL②雲の下端", color=color.new(#ff9800, 50),
-     linewidth=1, style=plot.style_cross)
+     linewidth=1, style=plot.style_line)
 
 // ==================== 描画：トレンド状態テーブル（右上）====================
 if show_trend_info and barstate.islast
