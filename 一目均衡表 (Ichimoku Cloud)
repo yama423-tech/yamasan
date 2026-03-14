@@ -54,11 +54,15 @@ sanyaku_kouten   = cond_tenkan_above and cond_above_cloud and cond_chikou_above
 sanyaku_gyakuten = not cond_tenkan_above and cond_below_cloud and cond_chikou_below
 
 // ==================== アラート ====================
-trend_change = (sanyaku_kouten and not sanyaku_kouten[1]) or (sanyaku_gyakuten and not sanyaku_gyakuten[1])
+kijun_up  = kijun > kijun[1]
+kijun_dn  = kijun < kijun[1]
+all_bull = cond_tenkan_above and (close > tenkan and close > kijun) and cond_above_cloud and cond_chikou_above and (span_a > span_b) and kijun_up and (volume > ta.sma(volume, vol_ma_len) * 1.2) and (close > close[mom_len])
+all_bear = (not cond_tenkan_above) and (close < tenkan and close < kijun) and cond_below_cloud and cond_chikou_below and (span_a < span_b) and kijun_dn and (volume > ta.sma(volume, vol_ma_len) * 1.2) and (close < close[mom_len])
+trend_change = (all_bull and not all_bull[1]) or (all_bear and not all_bear[1])
 price_cross_below_kijun = ta.crossunder(close, kijun)
 price_cross_below_tenkan = ta.crossunder(close, tenkan)
 
-alertcondition(trend_change, title="トレンド転換", message="一目均衡表：トレンド転換が発生しました")
+alertcondition(trend_change, title="トレンド転換", message="一目均衡表：STRONG BUY/SELL条件が成立しました")
 alertcondition(price_cross_below_kijun, title="基準線を下抜け", message="一目均衡表：価格が基準線を下抜けました")
 alertcondition(price_cross_below_tenkan, title="転換線を下抜け", message="一目均衡表：価格が転換線を下抜けました")
 
