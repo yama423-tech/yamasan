@@ -53,6 +53,10 @@ cond_chikou_below = close < close[chikou_offset]
 sanyaku_kouten   = cond_tenkan_above and cond_above_cloud and cond_chikou_above
 sanyaku_gyakuten = not cond_tenkan_above and cond_below_cloud and cond_chikou_below
 
+// ==================== アラート ====================
+trend_change = (sanyaku_kouten and not sanyaku_kouten[1]) or (sanyaku_gyakuten and not sanyaku_gyakuten[1])
+alertcondition(trend_change, title="トレンド転換", message="一目均衡表：トレンド転換が発生しました")
+
 // ==================== 描画：メインライン ====================
 plot(tenkan, title="転換線", color=tenkan_color, linewidth=1)
 plot(kijun,  title="基準線", color=kijun_color,   linewidth=2)
