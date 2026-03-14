@@ -139,9 +139,11 @@ if show_trend_info and barstate.islast
     table.cell(tbl, 0, 8, "勢い（" + str.tostring(mom_len) + "本前比）", text_color=color.white, text_size=size.normal)
     table.cell(tbl, 1, 8, mom_status, text_color=mom_clr, text_size=size.normal)
 
-    // ⑨ 総合判定
+    // ⑨ 総合判定（オールグリーンでSTRONG BUY、オールレッドでSTRONG SELL）
+    all_bull = cond_tenkan_above and (close > tenkan and close > kijun) and cond_above_cloud and cond_chikou_above and future_cloud_bull and kijun_rising and vol_surge and mom_up
+    all_bear = (not cond_tenkan_above) and (close < tenkan and close < kijun) and cond_below_cloud and cond_chikou_below and (not future_cloud_bull) and kijun_falling and vol_surge and mom_down
     table.cell(tbl, 0, 9, "━━ 総合判定 ━━", text_color=#ff9800, text_size=size.normal, bgcolor=color.new(#333333, 0))
-    verdict = sanyaku_kouten ? "★ 三役好転（強い買い）" : sanyaku_gyakuten ? "★ 三役逆転（強い売り）" : "様子見"
-    v_color = sanyaku_kouten ? #4caf50 : sanyaku_gyakuten ? #ff5252 : #ff9800
+    verdict = all_bull ? "★ STRONG BUY ★" : all_bear ? "★ STRONG SELL ★" : sanyaku_kouten ? "三役好転（様子見）" : sanyaku_gyakuten ? "三役逆転（様子見）" : "様子見"
+    v_color = all_bull ? #4caf50 : all_bear ? #ff5252 : #ff9800
     table.cell(tbl, 1, 9, verdict, text_color=v_color, text_size=size.normal, bgcolor=color.new(#333333, 0))
 
