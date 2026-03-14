@@ -81,7 +81,7 @@ if show_name_labels and bar_index % label_interval == 0
 
 // ==================== 描画：トレンド状態テーブル（右上）====================
 if show_trend_info and barstate.islast
-    var tbl = table.new(position.top_right, 2, 8, bgcolor=color.new(#1e1e1e, 10), border_width=1)
+    var tbl = table.new(position.top_right, 2, 9, bgcolor=color.new(#1e1e1e, 10), border_width=1)
 
     // ヘッダー
     table.cell(tbl, 0, 0, "チェック項目", text_color=color.white, text_size=size.normal, bgcolor=color.new(#333333, 0))
@@ -109,20 +109,28 @@ if show_trend_info and barstate.islast
     table.cell(tbl, 1, 4, future_cloud_bull ? "◯ 上昇雲" : "✕ 下降雲",
          text_color=future_cloud_bull ? #4caf50 : #ff5252, text_size=size.normal)
 
-    // ⑤ 出来高
-    vol_status = vol_surge ? "◯ 平均の" + str.tostring(volume / vol_ma, "#.#") + "倍" : "― 平常"
-    table.cell(tbl, 0, 5, "出来高（vs MA" + str.tostring(vol_ma_len) + "）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 5, vol_status, text_color=vol_surge ? #4caf50 : color.gray, text_size=size.normal)
+    // ⑤ トレンド（基準線の方向）
+    kijun_rising  = kijun > kijun[1]
+    kijun_falling = kijun < kijun[1]
+    trend_status = kijun_rising ? "◯ 上昇トレンド" : kijun_falling ? "✕ 下降トレンド" : "― 横ばい"
+    trend_clr = kijun_rising ? #4caf50 : kijun_falling ? #ff5252 : color.gray
+    table.cell(tbl, 0, 5, "トレンド（基準線）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 5, trend_status, text_color=trend_clr, text_size=size.normal)
 
-    // ⑥ モメンタム
+    // ⑥ 出来高
+    vol_status = vol_surge ? "◯ 平均の" + str.tostring(volume / vol_ma, "#.#") + "倍" : "― 平常"
+    table.cell(tbl, 0, 6, "出来高（vs MA" + str.tostring(vol_ma_len) + "）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 6, vol_status, text_color=vol_surge ? #4caf50 : color.gray, text_size=size.normal)
+
+    // ⑦ モメンタム
     mom_status = mom_up ? "◯ 上昇 +" + str.tostring(mom, "#.##") : mom_down ? "✕ 下降 " + str.tostring(mom, "#.##") : "― 横ばい"
     mom_clr = mom_up ? #4caf50 : mom_down ? #ff5252 : color.gray
-    table.cell(tbl, 0, 6, "勢い（" + str.tostring(mom_len) + "本前比）", text_color=color.white, text_size=size.normal)
-    table.cell(tbl, 1, 6, mom_status, text_color=mom_clr, text_size=size.normal)
+    table.cell(tbl, 0, 7, "勢い（" + str.tostring(mom_len) + "本前比）", text_color=color.white, text_size=size.normal)
+    table.cell(tbl, 1, 7, mom_status, text_color=mom_clr, text_size=size.normal)
 
-    // ⑦ 総合判定
-    table.cell(tbl, 0, 7, "━━ 総合判定 ━━", text_color=#ff9800, text_size=size.normal, bgcolor=color.new(#333333, 0))
+    // ⑧ 総合判定
+    table.cell(tbl, 0, 8, "━━ 総合判定 ━━", text_color=#ff9800, text_size=size.normal, bgcolor=color.new(#333333, 0))
     verdict = sanyaku_kouten ? "★ 三役好転（強い買い）" : sanyaku_gyakuten ? "★ 三役逆転（強い売り）" : "様子見"
     v_color = sanyaku_kouten ? #4caf50 : sanyaku_gyakuten ? #ff5252 : #ff9800
-    table.cell(tbl, 1, 7, verdict, text_color=v_color, text_size=size.normal, bgcolor=color.new(#333333, 0))
+    table.cell(tbl, 1, 8, verdict, text_color=v_color, text_size=size.normal, bgcolor=color.new(#333333, 0))
 
