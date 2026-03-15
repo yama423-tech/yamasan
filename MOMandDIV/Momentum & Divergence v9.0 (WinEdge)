@@ -346,28 +346,28 @@ allow(int lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
 if showLabels
     // MOM ラベル
     if showMOM and momUp and allow(lastMomUp)
-        label.new(bar_index, low, "MOM▲", style=label.style_label_up, color=color.new(color.fuchsia, 70), textcolor=color.white, size=size.tiny)
+        label.new(bar_index, low, "MOM▲", style=label.style_label_up, color=color.new(color.fuchsia, 40), textcolor=color.white, size=size.small)
         lastMomUp := bar_index
     if showMOM and momDn and allow(lastMomDn)
-        label.new(bar_index, high, "MOM▼", style=label.style_label_down, color=color.new(color.orange, 70), textcolor=color.white, size=size.tiny)
+        label.new(bar_index, high, "MOM▼", style=label.style_label_down, color=color.new(color.orange, 40), textcolor=color.white, size=size.small)
         lastMomDn := bar_index
 
     // DIV ラベル
     if showDiv and bullDivAny and allow(lastDivUp)
-        label.new(bar_index, low, "DIV▲", style=label.style_label_up, color=color.new(color.aqua, 70), textcolor=color.white, size=size.tiny)
+        label.new(bar_index, low, "DIV▲", style=label.style_label_up, color=color.new(color.aqua, 40), textcolor=color.white, size=size.small)
         lastDivUp := bar_index
     if showDiv and bearDivAny and allow(lastDivDn)
-        label.new(bar_index, high, "DIV▼", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.tiny)
+        label.new(bar_index, high, "DIV▼", style=label.style_label_down, color=color.new(color.red, 40), textcolor=color.white, size=size.small)
         lastDivDn := bar_index
 
     // BUY/SELL シグナル（メイン）
     if showCombo and bullSignal and allow(lastBuy)
         qTxt = " Q" + str.tostring(bullQuality)
-        label.new(bar_index, low, "BUY" + qTxt, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
+        label.new(bar_index, low, "BUY" + qTxt, style=label.style_label_up, color=color.new(color.lime, 30), textcolor=color.white, size=size.large)
         lastBuy := bar_index
     if showCombo and bearSignal and allow(lastSell)
         qTxt = " Q" + str.tostring(bearQuality)
-        label.new(bar_index, high, "SELL" + qTxt, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+        label.new(bar_index, high, "SELL" + qTxt, style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.large)
         lastSell := bar_index
 
 // EMAライン
@@ -377,31 +377,36 @@ plot(useTrendFilt ? emaTrend : na, "EMA", color=color.new(color.yellow, 60), lin
 // デバッグテーブル
 // ==========================================
 var table t = table.new(position.top_right, 2, 12, border_width=1)
+tblBg  = color.new(#1a1a2e, 0)
+tblHdr = color.new(#16213e, 0)
+tblTxt = color.new(#e0e0e0, 0)
+tblLbl = color.new(#8899aa, 0)
+
 if barstate.islast and showDebug
-    table.cell(t, 0, 0, "項目", text_color=color.white, bgcolor=color.gray)
-    table.cell(t, 1, 0, "値", text_color=color.white, bgcolor=color.gray)
-    table.cell(t, 0, 1, "Regime", bgcolor=color.new(color.black, 80))
-    table.cell(t, 1, 1, regimeName, bgcolor=regime==1?color.red:regime==2?color.orange:regime==3?color.yellow:regime==4?color.green:color.new(color.black, 80), text_color=color.white)
-    table.cell(t, 0, 2, "RSI Up/Dn")
-    table.cell(t, 1, 2, str.tostring(adjRsiUp) + " / " + str.tostring(adjRsiDn))
-    table.cell(t, 0, 3, "Gap")
-    table.cell(t, 1, 3, str.tostring(adjMinGap))
-    table.cell(t, 0, 4, "L/R")
-    table.cell(t, 1, 4, str.tostring(L) + " / " + str.tostring(R))
-    table.cell(t, 0, 5, "HTF Bias")
-    table.cell(t, 1, 5, useHtfBias ? (htfBull ? "Bull ▲" : htfBear ? "Bear ▼" : "Flat") : "OFF")
-    table.cell(t, 0, 6, "Bull/Bear Q")
-    table.cell(t, 1, 6, str.tostring(bullQuality) + " / " + str.tostring(bearQuality))
-    table.cell(t, 0, 7, "ATR Ratio")
-    table.cell(t, 1, 7, str.tostring(atrRatio, "#.##"))
-    table.cell(t, 0, 8, "RSI")
-    table.cell(t, 1, 8, str.tostring(rsi, "#.#"))
-    table.cell(t, 0, 9, "MACD Hist")
-    table.cell(t, 1, 9, str.tostring(hist, "#.####"))
-    table.cell(t, 0, 10, "Style/TF")
-    table.cell(t, 1, 10, tradeStyle + " / Cat" + str.tostring(tfCat))
-    table.cell(t, 0, 11, "ComboWin")
-    table.cell(t, 1, 11, str.tostring(comboBars) + " bars")
+    table.cell(t, 0, 0, "項目",  text_color=color.white, bgcolor=tblHdr, text_size=size.normal)
+    table.cell(t, 1, 0, "値",    text_color=color.white, bgcolor=tblHdr, text_size=size.normal)
+    table.cell(t, 0, 1, "Regime",      text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 1, regimeName,    text_color=color.white, bgcolor=regime==1?color.red:regime==2?color.orange:regime==3?color.yellow:regime==4?color.green:tblBg, text_size=size.normal)
+    table.cell(t, 0, 2, "RSI Up/Dn",  text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 2, str.tostring(adjRsiUp) + " / " + str.tostring(adjRsiDn), text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 3, "Gap",         text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 3, str.tostring(adjMinGap), text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 4, "L/R",         text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 4, str.tostring(L) + " / " + str.tostring(R), text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 5, "HTF Bias",    text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 5, useHtfBias ? (htfBull ? "Bull ▲" : htfBear ? "Bear ▼" : "Flat") : "OFF", text_color=htfBull?color.lime:htfBear?color.red:tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 6, "Bull/Bear Q", text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 6, str.tostring(bullQuality) + " / " + str.tostring(bearQuality), text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 7, "ATR Ratio",   text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 7, str.tostring(atrRatio, "#.##"), text_color=atrRatio>1.5?color.orange:tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 8, "RSI",         text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 8, str.tostring(rsi, "#.#"), text_color=rsi>70?color.red:rsi<30?color.lime:tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 9, "MACD Hist",   text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 9, str.tostring(hist, "#.####"), text_color=hist>0?color.lime:color.red, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 10, "Style/TF",   text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 10, tradeStyle + " / Cat" + str.tostring(tfCat), text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 0, 11, "ComboWin",   text_color=tblLbl, bgcolor=tblBg, text_size=size.normal)
+    table.cell(t, 1, 11, str.tostring(comboBars) + " bars", text_color=tblTxt, bgcolor=tblBg, text_size=size.normal)
 
 // ==========================================
 // アラート
