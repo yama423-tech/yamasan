@@ -346,28 +346,28 @@ allow(int lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
 if showLabels
     // MOM ラベル
     if showMOM and momUp and allow(lastMomUp)
-        label.new(bar_index, low, "MOM▲", style=label.style_label_up, color=color.new(color.fuchsia, 40), textcolor=color.white, size=size.small)
+        label.new(bar_index, low, "MOM▲", style=label.style_label_up, color=color.new(color.fuchsia, 40), textcolor=color.white, size=size.normal)
         lastMomUp := bar_index
     if showMOM and momDn and allow(lastMomDn)
-        label.new(bar_index, high, "MOM▼", style=label.style_label_down, color=color.new(color.orange, 40), textcolor=color.white, size=size.small)
+        label.new(bar_index, high, "MOM▼", style=label.style_label_down, color=color.new(color.orange, 40), textcolor=color.white, size=size.normal)
         lastMomDn := bar_index
 
     // DIV ラベル
     if showDiv and bullDivAny and allow(lastDivUp)
-        label.new(bar_index, low, "DIV▲", style=label.style_label_up, color=color.new(color.aqua, 40), textcolor=color.white, size=size.small)
+        label.new(bar_index, low, "DIV▲", style=label.style_label_up, color=color.new(color.aqua, 40), textcolor=color.white, size=size.normal)
         lastDivUp := bar_index
     if showDiv and bearDivAny and allow(lastDivDn)
-        label.new(bar_index, high, "DIV▼", style=label.style_label_down, color=color.new(color.red, 40), textcolor=color.white, size=size.small)
+        label.new(bar_index, high, "DIV▼", style=label.style_label_down, color=color.new(color.red, 40), textcolor=color.white, size=size.normal)
         lastDivDn := bar_index
 
     // BUY/SELL シグナル（メイン）
     if showCombo and bullSignal and allow(lastBuy)
         qTxt = " Q" + str.tostring(bullQuality)
-        label.new(bar_index, low, "BUY" + qTxt, style=label.style_label_up, color=color.new(color.lime, 30), textcolor=color.white, size=size.large)
+        label.new(bar_index, low, "BUY" + qTxt, style=label.style_label_up, color=color.new(color.lime, 30), textcolor=color.white, size=size.normal)
         lastBuy := bar_index
     if showCombo and bearSignal and allow(lastSell)
         qTxt = " Q" + str.tostring(bearQuality)
-        label.new(bar_index, high, "SELL" + qTxt, style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.large)
+        label.new(bar_index, high, "SELL" + qTxt, style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.normal)
         lastSell := bar_index
 
 // EMAライン
