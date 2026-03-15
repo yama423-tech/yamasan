@@ -140,9 +140,10 @@ hammerBounce = lowerWick > body * 1.5 and close > open and low <= ema25 * 1.01
 reclaimOK = reclaim5 or breakPrevHigh or hammerBounce
 
 // RSI改良：下から反転を重視
+rsiLow6 = ta.lowest(rsi, 6)
 rsiTurnOK = (
     rsi > rsi[1] and
-    ta.lowest(rsi, 6) <= 45 and
+    rsiLow6 <= 45 and
     rsi >= 38 and
     rsi <= 62
 )
@@ -572,7 +573,7 @@ alertcondition(signalBuy,   "25/75押し目買い",     "25/75押し目買いシ
 alertcondition(strongBuy,   "25/75強い押し目買い", "25/75強い押し目買いシグナル")
 alertcondition(halfSizeBuy, "25/75半サイズ買い",   "高ボラのため半サイズ推奨の押し目買いシグナル")
 alertcondition(warnSignal,  "25/75 WARN",          "保有中の5EMA割れ軽警戒シグナル")
-alertcondition(exitSignal,  "25/75 EXIT",          "EXIT: " + exitReason)
+alertcondition(exitSignal,  "25/75 EXIT",          "EXIT シグナル発生")
 alertcondition(tp1Signal,   "25/75 TP1到達",       "TP1到達 - 半分利確推奨")
 alertcondition(riskOff,     "25/75 見送り",        "75日線条件または急落条件により見送り")
 alertcondition(trailStopHit, "25/75 トレーリング", "トレーリングストップヒット")
