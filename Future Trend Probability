@@ -1,6 +1,6 @@
 //@version=6
-indicator("未来トレンドライン（確率付き）", overlay=true, shorttitle="予測TL",
-     max_lines_count=20, max_labels_count=20)
+indicator("未来トレンドライン（確率付き）v2", overlay=true, shorttitle="予測TL v2",
+     max_lines_count=50, max_labels_count=30)
 
 // ========================= 入力 =========================
 grpMain = "基本設定"
@@ -21,23 +21,26 @@ adxLen   = input.int(14,  "ADX期間", group=grpInd)
 emaShort = input.int(20,  "短期EMA", group=grpInd)
 emaLong  = input.int(60,  "長期EMA", group=grpInd)
 
+grpHist = "過去トレンド相関"
+pivotLB    = input.int(10,  "ピボット左右本数", minval=3, maxval=30, group=grpHist)
+srLookback = input.int(120, "S/R検出バー数", minval=30, maxval=400, group=grpHist)
+showSR     = input.bool(true, "サポレジラインを描画", group=grpHist)
+showPast   = input.bool(true, "過去回帰ラインを描画", group=grpHist)
+
 grpCol = "配色"
 colBull  = input.color(color.new(color.lime, 20),   "強気ライン色", group=grpCol)
 colBase  = input.color(color.new(color.yellow, 20),  "中立ライン色", group=grpCol)
 colBear  = input.color(color.new(color.red, 20),     "弱気ライン色", group=grpCol)
 
-// ========================= 計算 =========================
-// --- 線形回帰（傾きと現在値）---
+// ========================= 基本計算 =========================
 lr      = ta.linreg(close, regLen, 0)
-lrSlope = ta.linreg(close, regLen, 0) - ta.linreg(close, regLen, 1)  // 1バーあたりの傾き
+lrSlope = ta.linreg(close, regLen, 0) - ta.linreg(close, regLen, 1)
 sd      = ta.stdev(close, regLen)
+atr     = ta.atr(atrLen)
 
-// --- テクニカル指標 ---
 rsiVal = ta.rsi(close, rsiLen)
-
 [macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSig)
 
-// ADX（自前実装）
 f_adx(_len) =>
     up = high - high[1]
     dn = low[1] - low
@@ -55,86 +58,213 @@ f_adx(_len) =>
 
 emaS = ta.ema(close, emaShort)
 emaL = ta.ema(close, emaLong)
-atr  = ta.atr(atrLen)
 
-// ========================= 確率スコア算出 =========================
-// 各指標から強気スコア(0～1)を算出し、加重平均で確率を計算
-//
-// RSIスコア: 50超で強気寄り、50以下で弱気寄り
-rsiScore = math.max(0.0, math.min(1.0, (rsiVal - 20.0) / 60.0))
+// ================================================================
+//  【新規】過去トレンドとの相関分析
+// ================================================================
 
-// MACDスコア: ヒストグラムの正負と大きさ
-macdNorm  = histLine / (atr > 0 ? atr : 1.0)  // ATRで正規化
-macdScore = math.max(0.0, math.min(1.0, 0.5 + macdNorm * 0.3))
+// --- 1. R²（決定係数）: 回帰がどれだけ過去データにフィットしているか ---
+//     R² = 1 - (残差平方和 / 総平方和)
+//     高い → トレンドが明確 → 予測の信頼度が高い
+f_r_squared(_src, _len) =>
+    _lr = ta.linreg(_src, _len, 0)
+    _mean = ta.sma(_src, _len)
+    // 残差平方和 (SS_res) と 総平方和 (SS_tot)
+    ss_res = 0.0
+    ss_tot = 0.0
+    for i = 0 to _len - 1
+        ss_res += math.pow(_src[i] - _lr[i], 2)
+        ss_tot += math.pow(_src[i] - _mean, 2)
+    r2 = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0
+    math.max(0.0, math.min(1.0, r2))
 
-// ADXスコア: ADX>25でトレンドあり、+DI>-DIなら強気
-trendStr = adxVal > 25 ? 1.0 : adxVal / 25.0  // トレンド強度 0～1
-diScore  = plusDI > minusDI ? 0.5 + trendStr * 0.3 : 0.5 - trendStr * 0.3
-adxScore = math.max(0.0, math.min(1.0, diScore))
+r2 = f_r_squared(close, regLen)
 
-// EMAスコア: 短期>長期で強気
-emaDiff  = (emaS - emaL) / (atr > 0 ? atr : 1.0)
-emaScore = math.max(0.0, math.min(1.0, 0.5 + emaDiff * 0.15))
+// --- 2. 過去の予測精度: N本前の回帰予測 vs 実際の価格 ---
+//     過去に「この傾きで進む」と予測した値と実際を比較
+evalBars  = math.min(projBars, 20)  // 評価期間（最大20本）
+pastSlope = lrSlope[evalBars]       // N本前の時点での傾き
+pastLR    = lr[evalBars]            // N本前の時点での回帰値
+predicted = pastLR + pastSlope * evalBars  // 当時の予測値
+actual    = close                          // 実際の現在値
+predError = math.abs(predicted - actual) / (atr > 0 ? atr : 1.0)  // ATR正規化誤差
+// 誤差が小さいほど過去の予測が正確 → 信頼度UP
+pastAccuracy = math.max(0.0, math.min(1.0, 1.0 - predError / 5.0))
 
-// 回帰傾きスコア: 上向きなら強気
+// --- 3. サポート/レジスタンスライン検出 ---
+//     ピボットハイ/ローを検出し、直近2点を結んでトレンドラインを作る
+pivHigh = ta.pivothigh(high, pivotLB, pivotLB)
+pivLow  = ta.pivotlow(low, pivotLB, pivotLB)
+
+// ピボット位置を記録（最新2点ずつ）
+var float ph1 = na, var float ph2 = na  // 高値ピボット（価格）
+var int   px1 = na, var int   px2 = na  // 高値ピボット（バー位置）
+var float pl1 = na, var float pl2 = na  // 安値ピボット（価格）
+var int   lx1 = na, var int   lx2 = na  // 安値ピボット（バー位置）
+
+if not na(pivHigh)
+    ph2 := ph1, px2 := px1
+    ph1 := pivHigh, px1 := bar_index - pivotLB
+
+if not na(pivLow)
+    pl2 := pl1, lx2 := lx1
+    pl1 := pivLow, lx1 := bar_index - pivotLB
+
+// レジスタンスラインの傾き（高値2点結び）
+resSlope = not na(ph1) and not na(ph2) and px1 != px2 ?
+     (ph1 - ph2) / (px1 - px2) : 0.0
+// 現在バーでのレジスタンス推定値
+resNow = not na(ph1) and not na(px1) ?
+     ph1 + resSlope * (bar_index - px1) : na
+
+// サポートラインの傾き（安値2点結び）
+supSlope = not na(pl1) and not na(pl2) and lx1 != lx2 ?
+     (pl1 - pl2) / (lx1 - lx2) : 0.0
+// 現在バーでのサポート推定値
+supNow = not na(pl1) and not na(lx1) ?
+     pl1 + supSlope * (bar_index - lx1) : na
+
+// --- 4. 価格とS/Rラインの位置関係スコア ---
+//     サポート付近 → 反発期待（強気加点）
+//     レジスタンス付近 → 反落期待（弱気加点）
+srScore = 0.5  // デフォルト中立
+if not na(resNow) and not na(supNow)
+    range_ = math.abs(resNow - supNow)
+    if range_ > 0
+        position = (close - supNow) / range_  // 0=サポート上、1=レジスタンス上
+        // サポート付近(0に近い)→強気、レジスタンス付近(1に近い)→弱気
+        // ただし、ブレイクアウトも考慮：位置>1 or <0 ならトレンド継続
+        if position > 1.0
+            srScore := 0.7  // レジスタンス上抜け → 強気
+        else if position < 0.0
+            srScore := 0.3  // サポート下抜け → 弱気
+        else
+            srScore := 1.0 - position * 0.6  // 内側: サポート寄り=強気
+
+// --- 5. トレンド継続性: 回帰傾きが同方向を何本維持しているか ---
+trendCount = 0
+trendDir   = lrSlope > 0 ? 1 : -1
+for i = 1 to 60
+    pastDir = (ta.linreg(close, regLen, 0)[i] - ta.linreg(close, regLen, 1)[i]) > 0 ? 1 : -1
+    if pastDir == trendDir
+        trendCount += 1
+    else
+        break
+// 継続性スコア: 長く続くほどトレンド信頼度UP（ただし逆転リスクも）
+// 20本以上は逆に過熱感
+continuityScore = trendCount <= 20 ?
+     0.3 + trendCount / 20.0 * 0.5 :
+     0.8 - (trendCount - 20.0) / 40.0 * 0.3
+continuityScore := math.max(0.2, math.min(0.9, continuityScore))
+// 方向を反映（下降トレンド継続なら弱気寄りに）
+contDirScore = trendDir > 0 ? 0.5 + (continuityScore - 0.5) : 0.5 - (continuityScore - 0.5)
+
+// ========================= 確率スコア算出（v2） =========================
+// モメンタム指標（従来）
+rsiScore   = math.max(0.0, math.min(1.0, (rsiVal - 20.0) / 60.0))
+macdNorm   = histLine / (atr > 0 ? atr : 1.0)
+macdScore  = math.max(0.0, math.min(1.0, 0.5 + macdNorm * 0.3))
+trendStr   = adxVal > 25 ? 1.0 : adxVal / 25.0
+diScore    = plusDI > minusDI ? 0.5 + trendStr * 0.3 : 0.5 - trendStr * 0.3
+adxScore   = math.max(0.0, math.min(1.0, diScore))
+emaDiff    = (emaS - emaL) / (atr > 0 ? atr : 1.0)
+emaScore   = math.max(0.0, math.min(1.0, 0.5 + emaDiff * 0.15))
 slopeNorm  = lrSlope / (atr > 0 ? atr : 1.0)
 slopeScore = math.max(0.0, math.min(1.0, 0.5 + slopeNorm * 5.0))
 
-// --- 加重平均 ---
-wRSI   = 2.0
-wMACD  = 2.0
-wADX   = 2.0
-wEMA   = 2.0
+// --- 加重平均（過去相関を追加）---
+wRSI   = 1.5
+wMACD  = 1.5
+wADX   = 1.5
+wEMA   = 1.5
 wSlope = 2.0
-wTotal = wRSI + wMACD + wADX + wEMA + wSlope
+wR2    = 2.0   // R²（フィット度）
+wSR    = 2.0   // サポレジ位置
+wCont  = 1.5   // トレンド継続性
+wPast  = 1.5   // 過去予測精度
+wTotal = wRSI + wMACD + wADX + wEMA + wSlope + wR2 + wSR + wCont + wPast
+
+// R²は信頼度に使う（方向ではなく確信度の増幅）
+// R²が高い → 既存トレンドの傾きに素直に従う確率UP
+r2Boost = r2  // 0～1
+
+// 方向スコア（R²で既存トレンドを増幅）
+slopeDir = slopeScore  // 0=弱気、0.5=中立、1=強気
+r2Score  = 0.5 + (slopeDir - 0.5) * r2Boost  // R²が高いほど傾きを信頼
+
+// 過去精度も方向に適用: 精度が高い → 現在の傾きをより信頼
+pastScore = 0.5 + (slopeDir - 0.5) * pastAccuracy
 
 bullRaw = (rsiScore * wRSI + macdScore * wMACD + adxScore * wADX +
-           emaScore * wEMA + slopeScore * wSlope) / wTotal
+           emaScore * wEMA + slopeScore * wSlope +
+           r2Score * wR2 + srScore * wSR + contDirScore * wCont +
+           pastScore * wPast) / wTotal
 
-// bullRaw: 0～1 (0.5が中立)
-// これを3シナリオの確率に変換
-//   bullRaw > 0.5 → 強気確率が高い
-//   bullRaw < 0.5 → 弱気確率が高い
+// 3シナリオ変換
+bullProb = bullRaw * bullRaw * 1.2
+bearProb = (1.0 - bullRaw) * (1.0 - bullRaw) * 1.2
+baseProb = math.max(0.05, 1.0 - bullProb - bearProb)
 
-// シグモイド的にスムーズに変換
-bullProb = bullRaw * bullRaw * 1.2                          // 強気寄りほど加速
-bearProb = (1.0 - bullRaw) * (1.0 - bullRaw) * 1.2         // 弱気寄りほど加速
-baseProb = math.max(0.05, 1.0 - bullProb - bearProb)       // 残りが中立
-
-// 正規化（合計100%にする）
 sumProb  = bullProb + baseProb + bearProb
 pBull    = math.round(bullProb / sumProb * 100)
 pBear    = math.round(bearProb / sumProb * 100)
-pBase    = 100 - pBull - pBear  // 端数調整
+pBase    = 100 - pBull - pBear
 
-// ========================= 予測ライン描画 =========================
-// 最終バーのみ描画（リアルタイム更新）
+// ========================= 描画 =========================
 if barstate.islast
-    // --- 起点 ---
+    // --- 過去の回帰フィットライン（トレンドの根拠を可視化）---
+    if showPast
+        var line lnPastReg = na
+        if not na(lnPastReg)
+            line.delete(lnPastReg)
+        pastY = lr - lrSlope * regLen
+        lnPastReg := line.new(bar_index - regLen, pastY, bar_index, lr,
+             color=color.new(color.white, 50), width=1, style=line.style_dotted)
+
+    // --- サポート/レジスタンスライン描画 ---
+    if showSR and not na(resNow) and not na(px2) and not na(px1)
+        var line lnRes = na
+        if not na(lnRes)
+            line.delete(lnRes)
+        lnRes := line.new(px2, ph2, bar_index + projBars,
+             ph1 + resSlope * (bar_index + projBars - px1),
+             color=color.new(color.orange, 40), width=1, style=line.style_dashed)
+
+    if showSR and not na(supNow) and not na(lx2) and not na(lx1)
+        var line lnSup = na
+        if not na(lnSup)
+            line.delete(lnSup)
+        lnSup := line.new(lx2, pl2, bar_index + projBars,
+             pl1 + supSlope * (bar_index + projBars - lx1),
+             color=color.new(color.aqua, 40), width=1, style=line.style_dashed)
+
+    // --- 予測ライン ---
     x0 = bar_index
-    y0 = lr  // 回帰値を起点
+    y0 = lr
 
-    // --- 3シナリオの傾き ---
-    // 強気: 回帰傾き + ボラ上乗せ
-    bullSlope = lrSlope + sd * sdMult / projBars
-    // 中立: 回帰傾きそのまま
-    baseSlope = lrSlope
-    // 弱気: 回帰傾き - ボラ下乗せ
-    bearSlope = lrSlope - sd * sdMult / projBars
+    bullSlopeProj = lrSlope + sd * sdMult / projBars
+    baseSlopeProj = lrSlope
+    bearSlopeProj = lrSlope - sd * sdMult / projBars
 
-    // --- 終点 ---
-    x1 = x0 + projBars
-    yBull = y0 + bullSlope * projBars
-    yBase = y0 + baseSlope * projBars
-    yBear = y0 + bearSlope * projBars
+    x1    = x0 + projBars
+    yBull = y0 + bullSlopeProj * projBars
+    yBase = y0 + baseSlopeProj * projBars
+    yBear = y0 + bearSlopeProj * projBars
 
-    // --- 既存ライン/ラベル削除 ---
-    var line lnBull = na
-    var line lnBase = na
-    var line lnBear = na
-    var label lblBull = na
-    var label lblBase = na
-    var label lblBear = na
+    // レジスタンス/サポートで予測ラインを制限（意識される価格帯）
+    resProj = not na(resNow) ? ph1 + resSlope * (x1 - px1) : na
+    supProj = not na(supNow) ? pl1 + supSlope * (x1 - lx1) : na
+
+    // 強気ラインがレジスタンスを大幅に超える場合は抑制
+    if not na(resProj) and yBull > resProj * 1.02
+        yBull := resProj  // レジスタンスで頭打ち
+
+    // 弱気ラインがサポートを大幅に下回る場合は抑制
+    if not na(supProj) and yBear < supProj * 0.98
+        yBear := supProj  // サポートで下げ止まり
+
+    var line lnBull = na, var line lnBase = na, var line lnBear = na
+    var label lblBull = na, var label lblBase = na, var label lblBear = na
 
     if not na(lnBull)
         line.delete(lnBull)
@@ -149,60 +279,92 @@ if barstate.islast
     if not na(lblBear)
         label.delete(lblBear)
 
-    // --- ライン描画 ---
     lnBull := line.new(x0, y0, x1, yBull, color=colBull, width=lineWidth, style=line.style_dashed)
     lnBase := line.new(x0, y0, x1, yBase, color=colBase, width=lineWidth, style=line.style_solid)
     lnBear := line.new(x0, y0, x1, yBear, color=colBear, width=lineWidth, style=line.style_dashed)
 
-    // --- ラベル（確率表示）---
+    // 信頼度ランク表示
+    confText = r2 > 0.7 ? "信頼度:高" : r2 > 0.4 ? "信頼度:中" : "信頼度:低"
+
     lblBull := label.new(x1, yBull,
-         "▲ 強気 " + str.tostring(pBull) + "%\n ¥" + str.tostring(math.round(yBull)),
+         "▲ 強気 " + str.tostring(pBull) + "%\n¥" + str.tostring(math.round(yBull)),
          style=label.style_label_left, textcolor=color.white,
          color=color.new(color.green, 30), size=size.normal)
 
     lblBase := label.new(x1, yBase,
-         "― 中立 " + str.tostring(pBase) + "%\n ¥" + str.tostring(math.round(yBase)),
+         "― 中立 " + str.tostring(pBase) + "% " + confText + "\n¥" + str.tostring(math.round(yBase)),
          style=label.style_label_left, textcolor=color.white,
          color=color.new(color.gray, 30), size=size.normal)
 
     lblBear := label.new(x1, yBear,
-         "▼ 弱気 " + str.tostring(pBear) + "%\n ¥" + str.tostring(math.round(yBear)),
+         "▼ 弱気 " + str.tostring(pBear) + "%\n¥" + str.tostring(math.round(yBear)),
          style=label.style_label_left, textcolor=color.white,
          color=color.new(color.red, 30), size=size.normal)
 
 // ========================= 情報テーブル =========================
-var table infoTbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 70),
+var table infoTbl = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 70),
      border_color=color.gray, border_width=1, frame_color=color.gray, frame_width=1)
 
 if barstate.islast
-    table.cell(infoTbl, 0, 0, "指標", text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 0, "値",   text_color=color.white, text_size=size.small)
+    row = 0
+    f_cell(c, r, t, tc) =>
+        table.cell(infoTbl, c, r, t, text_color=tc, text_size=size.small)
 
-    table.cell(infoTbl, 0, 1, "RSI",  text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 1, str.tostring(math.round(rsiVal, 1)),
-         text_color=rsiVal > 50 ? color.lime : color.red, text_size=size.small)
+    f_cell(0, row, "指標", color.white),       f_cell(1, row, "値", color.white)
+    row += 1
 
-    table.cell(infoTbl, 0, 2, "MACD Hist", text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 2, str.tostring(math.round(histLine, 2)),
-         text_color=histLine > 0 ? color.lime : color.red, text_size=size.small)
+    // 過去相関（新規）
+    f_cell(0, row, "R²（フィット度）", color.white)
+    f_cell(1, row, str.tostring(math.round(r2, 3)),
+         r2 > 0.7 ? color.lime : r2 > 0.4 ? color.yellow : color.red)
+    row += 1
 
-    table.cell(infoTbl, 0, 3, "ADX",  text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 3, str.tostring(math.round(adxVal, 1)),
-         text_color=adxVal > 25 ? color.lime : color.yellow, text_size=size.small)
+    f_cell(0, row, "過去予測精度", color.white)
+    f_cell(1, row, str.tostring(math.round(pastAccuracy * 100, 1)) + "%",
+         pastAccuracy > 0.7 ? color.lime : pastAccuracy > 0.4 ? color.yellow : color.red)
+    row += 1
 
-    table.cell(infoTbl, 0, 4, "+DI / -DI", text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 4, str.tostring(math.round(plusDI,1)) + " / " + str.tostring(math.round(minusDI,1)),
-         text_color=plusDI > minusDI ? color.lime : color.red, text_size=size.small)
+    f_cell(0, row, "トレンド継続", color.white)
+    f_cell(1, row, str.tostring(trendCount) + "本 " + (trendDir > 0 ? "↑" : "↓"),
+         trendDir > 0 ? color.lime : color.red)
+    row += 1
 
-    table.cell(infoTbl, 0, 5, "EMA " + str.tostring(emaShort) + "/" + str.tostring(emaLong),
-         text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 5, emaS > emaL ? "GC ▲" : "DC ▼",
-         text_color=emaS > emaL ? color.lime : color.red, text_size=size.small)
+    f_cell(0, row, "S/R位置", color.white)
+    f_cell(1, row, srScore > 0.55 ? "サポ寄り" : srScore < 0.45 ? "レジ寄り" : "中間",
+         srScore > 0.55 ? color.lime : srScore < 0.45 ? color.red : color.yellow)
+    row += 1
 
-    table.cell(infoTbl, 0, 6, "回帰傾き", text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 6, str.tostring(math.round(lrSlope, 2)),
-         text_color=lrSlope > 0 ? color.lime : color.red, text_size=size.small)
+    // 従来指標
+    f_cell(0, row, "RSI", color.white)
+    f_cell(1, row, str.tostring(math.round(rsiVal, 1)),
+         rsiVal > 50 ? color.lime : color.red)
+    row += 1
 
-    table.cell(infoTbl, 0, 7, "▲強気/―中立/▼弱気", text_color=color.white, text_size=size.small)
-    table.cell(infoTbl, 1, 7, str.tostring(pBull) + "% / " + str.tostring(pBase) + "% / " + str.tostring(pBear) + "%",
-         text_color=pBull > pBear ? color.lime : color.red, text_size=size.small)
+    f_cell(0, row, "MACD Hist", color.white)
+    f_cell(1, row, str.tostring(math.round(histLine, 2)),
+         histLine > 0 ? color.lime : color.red)
+    row += 1
+
+    f_cell(0, row, "ADX", color.white)
+    f_cell(1, row, str.tostring(math.round(adxVal, 1)),
+         adxVal > 25 ? color.lime : color.yellow)
+    row += 1
+
+    f_cell(0, row, "+DI / -DI", color.white)
+    f_cell(1, row, str.tostring(math.round(plusDI,1)) + " / " + str.tostring(math.round(minusDI,1)),
+         plusDI > minusDI ? color.lime : color.red)
+    row += 1
+
+    f_cell(0, row, "EMA", color.white)
+    f_cell(1, row, emaS > emaL ? "GC ▲" : "DC ▼",
+         emaS > emaL ? color.lime : color.red)
+    row += 1
+
+    f_cell(0, row, "回帰傾き", color.white)
+    f_cell(1, row, str.tostring(math.round(lrSlope, 2)),
+         lrSlope > 0 ? color.lime : color.red)
+    row += 1
+
+    f_cell(0, row, "▲強気/―中立/▼弱気", color.white)
+    f_cell(1, row, str.tostring(pBull) + "% / " + str.tostring(pBase) + "% / " + str.tostring(pBear) + "%",
+         pBull > pBear ? color.lime : color.red)
