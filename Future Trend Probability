@@ -1,0 +1,208 @@
+//@version=6
+indicator("未来トレンドライン（確率付き）", overlay=true, shorttitle="予測TL",
+     max_lines_count=20, max_labels_count=20)
+
+// ========================= 入力 =========================
+grpMain = "基本設定"
+regLen    = input.int(60,  "回帰期間（本数）", minval=10, maxval=300, group=grpMain)
+projBars  = input.int(30,  "予測バー数（右に伸ばす本数）", minval=5, maxval=200, group=grpMain)
+lineWidth = input.int(2,   "線の太さ", minval=1, maxval=5, group=grpMain)
+
+grpVola = "ボラティリティ設定"
+atrLen   = input.int(14,  "ATR期間", minval=2, group=grpVola)
+sdMult   = input.float(1.5, "標準偏差倍率（楽観/悲観の幅）", step=0.1, minval=0.5, maxval=4.0, group=grpVola)
+
+grpInd = "モメンタム指標"
+rsiLen   = input.int(14,  "RSI期間", group=grpInd)
+macdFast = input.int(12,  "MACD Fast", group=grpInd)
+macdSlow = input.int(26,  "MACD Slow", group=grpInd)
+macdSig  = input.int(9,   "MACD Signal", group=grpInd)
+adxLen   = input.int(14,  "ADX期間", group=grpInd)
+emaShort = input.int(20,  "短期EMA", group=grpInd)
+emaLong  = input.int(60,  "長期EMA", group=grpInd)
+
+grpCol = "配色"
+colBull  = input.color(color.new(color.lime, 20),   "強気ライン色", group=grpCol)
+colBase  = input.color(color.new(color.yellow, 20),  "中立ライン色", group=grpCol)
+colBear  = input.color(color.new(color.red, 20),     "弱気ライン色", group=grpCol)
+
+// ========================= 計算 =========================
+// --- 線形回帰（傾きと現在値）---
+lr      = ta.linreg(close, regLen, 0)
+lrSlope = ta.linreg(close, regLen, 0) - ta.linreg(close, regLen, 1)  // 1バーあたりの傾き
+sd      = ta.stdev(close, regLen)
+
+// --- テクニカル指標 ---
+rsiVal = ta.rsi(close, rsiLen)
+
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSig)
+
+// ADX（自前実装）
+f_adx(_len) =>
+    up = high - high[1]
+    dn = low[1] - low
+    plusDM  = up > 0 and up > dn ? up : 0.0
+    minusDM = dn > 0 and dn > up ? dn : 0.0
+    tr1 = math.max(high - low, math.max(math.abs(high - close[1]), math.abs(low - close[1])))
+    tr  = ta.rma(tr1, _len)
+    plusDI  = 100.0 * ta.rma(plusDM, _len) / tr
+    minusDI = 100.0 * ta.rma(minusDM, _len) / tr
+    dx  = 100.0 * math.abs(plusDI - minusDI) / math.max(plusDI + minusDI, 1e-10)
+    adxVal = ta.rma(dx, _len)
+    [plusDI, minusDI, adxVal]
+
+[plusDI, minusDI, adxVal] = f_adx(adxLen)
+
+emaS = ta.ema(close, emaShort)
+emaL = ta.ema(close, emaLong)
+atr  = ta.atr(atrLen)
+
+// ========================= 確率スコア算出 =========================
+// 各指標から強気スコア(0～1)を算出し、加重平均で確率を計算
+//
+// RSIスコア: 50超で強気寄り、50以下で弱気寄り
+rsiScore = math.max(0.0, math.min(1.0, (rsiVal - 20.0) / 60.0))
+
+// MACDスコア: ヒストグラムの正負と大きさ
+macdNorm  = histLine / (atr > 0 ? atr : 1.0)  // ATRで正規化
+macdScore = math.max(0.0, math.min(1.0, 0.5 + macdNorm * 0.3))
+
+// ADXスコア: ADX>25でトレンドあり、+DI>-DIなら強気
+trendStr = adxVal > 25 ? 1.0 : adxVal / 25.0  // トレンド強度 0～1
+diScore  = plusDI > minusDI ? 0.5 + trendStr * 0.3 : 0.5 - trendStr * 0.3
+adxScore = math.max(0.0, math.min(1.0, diScore))
+
+// EMAスコア: 短期>長期で強気
+emaDiff  = (emaS - emaL) / (atr > 0 ? atr : 1.0)
+emaScore = math.max(0.0, math.min(1.0, 0.5 + emaDiff * 0.15))
+
+// 回帰傾きスコア: 上向きなら強気
+slopeNorm  = lrSlope / (atr > 0 ? atr : 1.0)
+slopeScore = math.max(0.0, math.min(1.0, 0.5 + slopeNorm * 5.0))
+
+// --- 加重平均 ---
+wRSI   = 2.0
+wMACD  = 2.0
+wADX   = 2.0
+wEMA   = 2.0
+wSlope = 2.0
+wTotal = wRSI + wMACD + wADX + wEMA + wSlope
+
+bullRaw = (rsiScore * wRSI + macdScore * wMACD + adxScore * wADX +
+           emaScore * wEMA + slopeScore * wSlope) / wTotal
+
+// bullRaw: 0～1 (0.5が中立)
+// これを3シナリオの確率に変換
+//   bullRaw > 0.5 → 強気確率が高い
+//   bullRaw < 0.5 → 弱気確率が高い
+
+// シグモイド的にスムーズに変換
+bullProb = bullRaw * bullRaw * 1.2                          // 強気寄りほど加速
+bearProb = (1.0 - bullRaw) * (1.0 - bullRaw) * 1.2         // 弱気寄りほど加速
+baseProb = math.max(0.05, 1.0 - bullProb - bearProb)       // 残りが中立
+
+// 正規化（合計100%にする）
+sumProb  = bullProb + baseProb + bearProb
+pBull    = math.round(bullProb / sumProb * 100)
+pBear    = math.round(bearProb / sumProb * 100)
+pBase    = 100 - pBull - pBear  // 端数調整
+
+// ========================= 予測ライン描画 =========================
+// 最終バーのみ描画（リアルタイム更新）
+if barstate.islast
+    // --- 起点 ---
+    x0 = bar_index
+    y0 = lr  // 回帰値を起点
+
+    // --- 3シナリオの傾き ---
+    // 強気: 回帰傾き + ボラ上乗せ
+    bullSlope = lrSlope + sd * sdMult / projBars
+    // 中立: 回帰傾きそのまま
+    baseSlope = lrSlope
+    // 弱気: 回帰傾き - ボラ下乗せ
+    bearSlope = lrSlope - sd * sdMult / projBars
+
+    // --- 終点 ---
+    x1 = x0 + projBars
+    yBull = y0 + bullSlope * projBars
+    yBase = y0 + baseSlope * projBars
+    yBear = y0 + bearSlope * projBars
+
+    // --- 既存ライン/ラベル削除 ---
+    var line lnBull = na
+    var line lnBase = na
+    var line lnBear = na
+    var label lblBull = na
+    var label lblBase = na
+    var label lblBear = na
+
+    if not na(lnBull)
+        line.delete(lnBull)
+    if not na(lnBase)
+        line.delete(lnBase)
+    if not na(lnBear)
+        line.delete(lnBear)
+    if not na(lblBull)
+        label.delete(lblBull)
+    if not na(lblBase)
+        label.delete(lblBase)
+    if not na(lblBear)
+        label.delete(lblBear)
+
+    // --- ライン描画 ---
+    lnBull := line.new(x0, y0, x1, yBull, color=colBull, width=lineWidth, style=line.style_dashed)
+    lnBase := line.new(x0, y0, x1, yBase, color=colBase, width=lineWidth, style=line.style_solid)
+    lnBear := line.new(x0, y0, x1, yBear, color=colBear, width=lineWidth, style=line.style_dashed)
+
+    // --- ラベル（確率表示）---
+    lblBull := label.new(x1, yBull,
+         "▲ 強気 " + str.tostring(pBull) + "%\n ¥" + str.tostring(math.round(yBull)),
+         style=label.style_label_left, textcolor=color.white,
+         color=color.new(color.green, 30), size=size.normal)
+
+    lblBase := label.new(x1, yBase,
+         "― 中立 " + str.tostring(pBase) + "%\n ¥" + str.tostring(math.round(yBase)),
+         style=label.style_label_left, textcolor=color.white,
+         color=color.new(color.gray, 30), size=size.normal)
+
+    lblBear := label.new(x1, yBear,
+         "▼ 弱気 " + str.tostring(pBear) + "%\n ¥" + str.tostring(math.round(yBear)),
+         style=label.style_label_left, textcolor=color.white,
+         color=color.new(color.red, 30), size=size.normal)
+
+// ========================= 情報テーブル =========================
+var table infoTbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 70),
+     border_color=color.gray, border_width=1, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    table.cell(infoTbl, 0, 0, "指標", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 0, "値",   text_color=color.white, text_size=size.small)
+
+    table.cell(infoTbl, 0, 1, "RSI",  text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 1, str.tostring(math.round(rsiVal, 1)),
+         text_color=rsiVal > 50 ? color.lime : color.red, text_size=size.small)
+
+    table.cell(infoTbl, 0, 2, "MACD Hist", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 2, str.tostring(math.round(histLine, 2)),
+         text_color=histLine > 0 ? color.lime : color.red, text_size=size.small)
+
+    table.cell(infoTbl, 0, 3, "ADX",  text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 3, str.tostring(math.round(adxVal, 1)),
+         text_color=adxVal > 25 ? color.lime : color.yellow, text_size=size.small)
+
+    table.cell(infoTbl, 0, 4, "+DI / -DI", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 4, str.tostring(math.round(plusDI,1)) + " / " + str.tostring(math.round(minusDI,1)),
+         text_color=plusDI > minusDI ? color.lime : color.red, text_size=size.small)
+
+    table.cell(infoTbl, 0, 5, "EMA " + str.tostring(emaShort) + "/" + str.tostring(emaLong),
+         text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 5, emaS > emaL ? "GC ▲" : "DC ▼",
+         text_color=emaS > emaL ? color.lime : color.red, text_size=size.small)
+
+    table.cell(infoTbl, 0, 6, "回帰傾き", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 6, str.tostring(math.round(lrSlope, 2)),
+         text_color=lrSlope > 0 ? color.lime : color.red, text_size=size.small)
+
+    table.cell(infoTbl, 0, 7, "▲強気/―中立/▼弱気", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 7, str.tostring(pBull) + "% / " + str.tostring(pBase) + "% / " + str.tostring(pBear) + "%",
+         text_color=pBull > pBear ? color.lime : color.red, text_size=size.small)
