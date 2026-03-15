@@ -1,250 +1,221 @@
 //@version=6
-indicator("Momentum & Divergence v7.0 (Ultimate)", overlay=true, scale=scale.right, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+indicator("Momentum & Divergence v8.1 (Debugged Pro)", overlay=true, scale=scale.right, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
 
 // ==========================================
-// 1. 感度・戦略設定 (Sensitivity Strategy)
+// 1. トレードスタイル & 感度設定
 // ==========================================
-groupStrat = "📊 感度・戦略設定"
-sensitivity = input.string("Lv3: Normal", "感度レベル", options=["Lv1: Scalper (Very Fast)", "Lv2: Fast", "Lv3: Normal", "Lv4: Strict", "Lv5: Swing (Solid)"], group=groupStrat, tooltip="Lv1: 反応早め・ダマシあり（スキャル向）\nLv3: 標準\nLv5: 確実性重視・頻度低（スイング向）")
+groupStrat = "📊 トレードスタイル & 感度設定"
+tradeStyle = input.string("スイング", "トレードスタイル", options=["短期","スイング","中期","長期"], group=groupStrat)
+sensitivity = input.string("Lv3: Scalper (Center)", "感度レベル", options=["Lv1: Swing (Solid)", "Lv2: Strict", "Lv3: Scalper (Center)", "Lv4: Fast", "Lv5: Normal"], group=groupStrat)
 
-// 感度マッピング（レベルごとのパラメータ自動設定）
-var int p_L = na, var int p_R = na, var int p_gap = na
-var int p_rsiUp = na, var int p_rsiDn = na
-
-if sensitivity == "Lv1: Scalper (Very Fast)"
-    p_L := 2, p_R := 2, p_gap := 2, p_rsiUp := 52, p_rsiDn := 48
-else if sensitivity == "Lv2: Fast"
-    p_L := 4, p_R := 4, p_gap := 5, p_rsiUp := 54, p_rsiDn := 46
-else if sensitivity == "Lv3: Normal"
-    p_L := 6, p_R := 6, p_gap := 10, p_rsiUp := 55, p_rsiDn := 45
-else if sensitivity == "Lv4: Strict"
-    p_L := 10, p_R := 10, p_gap := 15, p_rsiUp := 58, p_rsiDn := 42
-else // Lv5
-    p_L := 20, p_R := 20, p_gap := 20, p_rsiUp := 60, p_rsiDn := 40
-
-// カスタム調整（上級者用）
 useCustom   = input.bool(false, "詳細パラメータを手動設定する", group=groupStrat)
 src         = input.source(close, "価格ソース", group=groupStrat)
 rsiLen      = input.int(14, "RSI期間", minval=2, group=groupStrat)
 
-// 実際の適用値
-L      = useCustom ? input.int(6, "Pivot 左", group=groupStrat) : p_L
-R      = useCustom ? input.int(6, "Pivot 右", group=groupStrat) : p_R
-minGap = useCustom ? input.int(10,"Pivot間隔", group=groupStrat) : p_gap
-rsiUp  = useCustom ? input.int(55, "RSI基準(上)", group=groupStrat) : p_rsiUp
-rsiDn  = useCustom ? input.int(45, "RSI基準(下)", group=groupStrat) : p_rsiDn
+// 足自動調整
+tfSeconds = timeframe.in_seconds()
+tfCat = tfSeconds <= 300 ? 1 : tfSeconds <= 1800 ? 2 : tfSeconds <= 14400 ? 3 : tfSeconds <= 86400 ? 4 : 5
+
+tfScaleL   = tfCat == 1 ? 0.5 : tfCat == 2 ? 0.75 : tfCat == 3 ? 1.0 : tfCat == 4 ? 1.5 : 2.0
+tfScaleGap = tfCat == 1 ? 0.5 : tfCat == 2 ? 0.75 : tfCat == 3 ? 1.0 : tfCat == 4 ? 1.25 : 1.5
+tfRsiAdj   = tfCat == 1 ? -3 : tfCat == 2 ? -1 : tfCat == 3 ? 0 : tfCat == 4 ? 1 : 2
+
+styleScaleL   = tradeStyle == "短期" ? 0.6 : tradeStyle == "スイング" ? 1.0 : tradeStyle == "中期" ? 1.4 : 2.0
+styleScaleGap = tradeStyle == "短期" ? 0.5 : tradeStyle == "スイング" ? 1.0 : tradeStyle == "中期" ? 1.3 : 1.8
+styleRsiAdj   = tradeStyle == "短期" ? -2 : tradeStyle == "スイング" ? 0 : tradeStyle == "中期" ? 1 : 2
+
+var int baseL = na
+var int baseR = na
+var int baseGap = na
+var int baseRsiUp = na
+var int baseRsiDn = na
+
+if sensitivity == "Lv1: Swing (Solid)"
+    baseL := 20
+    baseR := 20
+    baseGap := 20
+    baseRsiUp := 60
+    baseRsiDn := 40
+else if sensitivity == "Lv2: Strict"
+    baseL := 10
+    baseR := 10
+    baseGap := 15
+    baseRsiUp := 58
+    baseRsiDn := 42
+else if sensitivity == "Lv3: Scalper (Center)"
+    baseL := 2
+    baseR := 2
+    baseGap := 2
+    baseRsiUp := 52
+    baseRsiDn := 48
+else if sensitivity == "Lv4: Fast"
+    baseL := 4
+    baseR := 4
+    baseGap := 5
+    baseRsiUp := 54
+    baseRsiDn := 46
+else
+    baseL := 6
+    baseR := 6
+    baseGap := 10
+    baseRsiUp := 55
+    baseRsiDn := 45
+
+scaledL = int(math.max(1, math.round(baseL * tfScaleL * styleScaleL)))
+scaledR = int(math.max(1, math.round(baseR * tfScaleL * styleScaleL)))
+scaledGap = int(math.max(1, math.round(baseGap * tfScaleGap * styleScaleGap)))
+scaledRsiUp = int(math.min(70, math.max(50, baseRsiUp + tfRsiAdj + styleRsiAdj)))
+scaledRsiDn = int(math.max(30, math.min(50, baseRsiDn - tfRsiAdj - styleRsiAdj)))
+
+L      = useCustom ? input.int(6, "Pivot 左", group=groupStrat) : scaledL
+R      = useCustom ? input.int(6, "Pivot 右", group=groupStrat) : scaledR
+minGap = useCustom ? input.int(10, "Pivot間隔", group=groupStrat) : scaledGap
+rsiUp  = useCustom ? input.int(55, "RSI基準(上)", group=groupStrat) : scaledRsiUp
+rsiDn  = useCustom ? input.int(45, "RSI基準(下)", group=groupStrat) : scaledRsiDn
 
 // MACD設定
 groupMACD = "MACD設定"
-fast = input.int(12, "MACD Fast", group=groupMACD)
-slow = input.int(26, "MACD Slow", group=groupMACD)
-sig  = input.int(9,  "MACD Signal", group=groupMACD)
+baseFast = input.int(12, "MACD Fast", group=groupMACD)
+baseSlow = input.int(26, "MACD Slow", group=groupMACD)
+baseSig  = input.int(9, "MACD Signal", group=groupMACD)
+macdTfScale = tfCat == 1 ? 0.7 : tfCat == 2 ? 0.85 : tfCat == 3 ? 1.0 : tfCat == 4 ? 1.0 : 1.2
+fast = useCustom ? baseFast : int(math.max(3, math.round(baseFast * macdTfScale)))
+slow = useCustom ? baseSlow : int(math.max(8, math.round(baseSlow * macdTfScale)))
+sig  = useCustom ? baseSig : int(math.max(3, math.round(baseSig * macdTfScale)))
 
 // ==========================================
-// 2. フィルタ・確定ロジック (Logic)
+// 2. レジーム & エッジフィルタ
 // ==========================================
-groupVol = "出来高フィルタ"
-useVolFilt = input.bool(false, "出来高スパイクでフィルタ", group=groupVol)
-volLen     = input.int(20, "出来高SMA期間", minval=2, group=groupVol)
-volMult    = input.float(1.5, "倍率しきい値", minval=1.0, step=0.1, group=groupVol)
+groupRegime = "🔄 レジーム自動判定"
+useRegime = input.bool(true, "レジーム自動調整を有効化", group=groupRegime)
+regimeLookback = input.int(60, "レジーム判定ルックバック", minval=20, maxval=200, group=groupRegime)
 
-groupC = "確定ロジック (Strict)"
-useConfirm    = input.bool(false, "確定シグナル(Confirmed)を計算", group=groupC)
-useSwingBreak = input.bool(true,  "戻り高値/安値ブレイク必須", group=groupC)
-useMACDconf   = input.bool(true,  "MACDクロス/0ライン必須",    group=groupC)
-useRSIconf    = input.bool(true,  "RSI>50/<50 必須",           group=groupC)
-useTrendFilt  = input.bool(true,  "EMAトレンド条件",           group=groupC)
-maLen         = input.int(200,    "EMA期間",                   group=groupC)
-trendBars     = input.int(5,      "EMA向き確認本数",           group=groupC)
-useVolConf    = input.bool(false, "出来高スパイクも必須",      group=groupC)
+regimeEma = ta.ema(close, 200)
+regimeAtr = ta.atr(14)
+regimeAtrPct = close != 0 ? (regimeAtr / close) * 100.0 : 0.0
+avgAtrPct = ta.sma(regimeAtrPct, regimeLookback)
+atrRatio = avgAtrPct > 0 ? regimeAtrPct / avgAtrPct : 1.0
+recentHigh = ta.highest(high, regimeLookback)
+drawdownPct = recentHigh > 0 ? ((recentHigh - close) / recentHigh) * 100.0 : 0.0
+roc10 = ta.roc(close, 10)
 
-groupCombo   = "コンボ判定 (MOM × Div)"
-useComboBull = input.bool(true,  "Bull: MOM↑ × BullDiv", group=groupCombo)
-useComboBear = input.bool(true,  "Bear: MOM↓ × BearDiv", group=groupCombo)
-comboBars    = input.int(30,     "許容ウィンドウ本数",    minval=1, group=groupCombo)
-orderOpt     = input.string("どちらでも", "発生順序", options=["Div→MOMのみ","MOM→Divのみ","どちらでも"], group=groupCombo)
+var int regime = 5
+if drawdownPct > 15 and roc10 < -5 and atrRatio > 1.8
+    regime := 1
+else if close < regimeEma and roc10 < -2
+    regime := 2
+else if atrRatio > 1.6 and math.abs(ta.roc(regimeEma, 5)) < 0.7
+    regime := 3
+else if close > regimeEma and roc10 > 2
+    regime := 4
+else
+    regime := 5
 
-// ==========================================
-// 3. 表示・デザイン (Visuals)
-// ==========================================
-groupView = "表示制御"
-showMOM       = input.bool(true,  "MOM（初動）を表示", group=groupView)
-showMOMUp     = input.bool(true,  " └ MOM↑", inline="m1", group=groupView)
-showMOMDn     = input.bool(true,  "MOM↓",     inline="m1", group=groupView)
+regimeName = regime == 1 ? "暴落" : regime == 2 ? "下降" : regime == 3 ? "高ボラ" : regime == 4 ? "上昇" : "通常"
+regimeThreshAdj = regime == 1 ? -4 : regime == 2 ? -2 : regime == 3 ? -2 : regime == 4 ? 2 : 0
+adjRsiUp = useRegime ? int(math.min(70, math.max(50, rsiUp + regimeThreshAdj))) : rsiUp
+adjRsiDn = useRegime ? int(math.max(30, math.min(50, rsiDn - regimeThreshAdj))) : rsiDn
+adjMinGap = useRegime ? int(math.max(1, math.round(minGap * (regime == 1 ? 0.75 : regime == 4 ? 1.05 : 1.0)))) : minGap
 
-showDiv       = input.bool(true,  "Div (ダイバージェンス) を表示", group=groupView)
-divSourceSel  = input.string("RSI+MACD", "Div判定ソース", options=["RSI+MACD","MACDのみ","RSIのみ"], group=groupView)
-divConfirmedOnly = input.bool(false, "Divは『確定のみ』表示（未確定を隠す）", group=groupView)
+// 勝率改善向け: HTFバイアス + クオリティスコア
+groupEdge = "🏆 勝率改善フィルタ"
+useHtfBias = input.bool(true, "上位足EMA方向を必須化", group=groupEdge)
+htfTf = input.string("D", "上位足", options=["240", "D", "W"], group=groupEdge)
+htfEmaLen = input.int(200, "上位足EMA", minval=20, group=groupEdge)
+minQuality = input.int(3, "最小クオリティ(0-5)", minval=0, maxval=5, group=groupEdge)
 
-showConfirm   = input.bool(true,  "Confirmed（確定）を表示", group=groupView)
-showCombo     = input.bool(true,  "Combo（MOM×Div）を表示", group=groupView)
-showLinesPrice= input.bool(true,  "ダイバージェンスライン（価格）", group=groupView)
-showLabels    = input.bool(true,  "ラベルを表示（マスターSW）", group=groupView)
-
-// デザイン設定（ユーザー要望対応）
-groupStyle = "🎨 デザイン・色調整"
-alphaLbl   = input.int(85, "ラベル背景の透明度 (0-100)", minval=0, maxval=100, group=groupStyle, tooltip="数値が大きいほど薄くなります（推奨: 80-90）")
-sizeSel    = input.string("normal", "文字サイズ", options=["tiny","small","normal","large","huge"], group=groupStyle)
-textColor  = input.color(color.white, "文字色", group=groupStyle)
-labelGapBars = input.int(5, "ラベル重複回避（最小間隔）", minval=0, group=groupStyle)
-
-// ラベル位置オフセット
-groupOffset = "ラベル位置微調整"
-anchorSel = input.string("高値/安値", "基準位置", options=["高値/安値","終値±"], group=groupOffset)
-offMode   = input.string("自動", "距離計算", options=["自動","ATR","パーセント"], group=groupOffset)
-atrMult   = input.float(0.5, "ATR係数", step=0.1, group=groupOffset)
-pctPct    = input.float(0.5, "％係数", step=0.1, group=groupOffset)
-
-// ラベルサイズ変換
-labelSize = sizeSel=="tiny"?size.tiny:sizeSel=="small"?size.small:sizeSel=="normal"?size.normal:sizeSel=="large"?size.large:size.huge
+htfClose = request.security(syminfo.tickerid, htfTf, close)
+htfEma = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaLen))
+htfBull = htfClose > htfEma
+htfBear = htfClose < htfEma
 
 // ==========================================
-// 計算ロジック (Calculation Core)
+// 3. ロジック
 // ==========================================
+groupC = "確定ロジック"
+useTrendFilt = input.bool(true, "EMAトレンド条件", group=groupC)
+maLen = input.int(200, "EMA期間", group=groupC)
+trendBars = input.int(5, "EMA向き確認本数", group=groupC)
+useMACDconf = input.bool(true, "MACDクロス必須", group=groupC)
+useRSIconf = input.bool(true, "RSI>50/<50必須", group=groupC)
+
 rsi = ta.rsi(src, rsiLen)
-macdLine   = ta.ema(src, fast) - ta.ema(src, slow)
+macdLine = ta.ema(src, fast) - ta.ema(src, slow)
 signalLine = ta.ema(macdLine, sig)
-hist       = macdLine - signalLine
+hist = macdLine - signalLine
 
-volSma   = ta.sma(volume, volLen)
-volSpike = volume > volSma * volMult
+momUp = ta.crossover(hist, 0) and rsi > adjRsiUp
+momDn = ta.crossunder(hist, 0) and rsi < adjRsiDn
 
-momUp = ta.crossover(hist, 0) and (rsi > rsiUp) and (not useVolFilt or volSpike)
-momDn = ta.crossunder(hist, 0) and (rsi < rsiDn) and (not useVolFilt or volSpike)
-
-// ダイバージェンス関数
-f_div(srcSeries, oscSeries, int L_, int R_, int gap_, bool useVol, series bool volSeries, bool isBull) =>
+f_div(srcSeries, oscSeries, int L_, int R_, int gap_, bool isBull) =>
     float pivotVal = isBull ? ta.pivotlow(srcSeries, L_, R_) : ta.pivothigh(srcSeries, L_, R_)
-    float oscVal   = isBull ? ta.pivotlow(oscSeries, L_, R_) : ta.pivothigh(oscSeries, L_, R_)
-    
-    var float prevPivot = na, var float prevOsc = na, var int prevBar = na
-    bool detected = false, int trigBar = na
-    
+    float oscVal = isBull ? ta.pivotlow(oscSeries, L_, R_) : ta.pivothigh(oscSeries, L_, R_)
+    var float prevPivot = na
+    var float prevOsc = na
+    var int prevBar = na
+    bool detected = false
+
     if not na(pivotVal) and not na(oscVal)
         currBar = bar_index - R_
-        gapOK = not na(prevBar) ? (currBar - prevBar >= gap_) : false
-        volOK = (not useVol) or (bar_index >= R_ and volSeries[R_])
-        
-        // Bull: 価格安値更新(Low < prev) かつ Osc安値切り上げ(Osc > prev)
-        // Bear: 価格高値更新(High > prev) かつ Osc高値切り下げ(Osc < prev)
+        gapOK = not na(prevBar) and (currBar - prevBar >= gap_)
         cond = isBull ? (pivotVal < prevPivot and oscVal > prevOsc) : (pivotVal > prevPivot and oscVal < prevOsc)
-        
-        if gapOK and cond and volOK
+        if gapOK and cond
             detected := true
-            trigBar  := currBar
-            // ライン描画
-            if showLinesPrice
-                line.new(prevBar, prevPivot, currBar, pivotVal, xloc=xloc.bar_index, color=isBull ? color.new(color.teal, 50) : color.new(color.maroon, 50), width=2)
-
         prevPivot := pivotVal
-        prevOsc   := oscVal
-        prevBar   := currBar
-    [detected, trigBar]
+        prevOsc := oscVal
+        prevBar := currBar
+    detected
 
-// 検出実行
-[bRSI,  bRSIbar ] = f_div(src, rsi,  L, R, minGap, useVolFilt, volSpike, true)
-[sRSI,  sRSIbar ] = f_div(src, rsi,  L, R, minGap, useVolFilt, volSpike, false)
-[bMACD, bMACDbar] = f_div(src, hist, L, R, minGap, useVolFilt, volSpike, true)
-[sMACD, sMACDbar] = f_div(src, hist, L, R, minGap, useVolFilt, volSpike, false)
+bullDiv = f_div(src, rsi, L, R, adjMinGap, true) or f_div(src, hist, L, R, adjMinGap, true)
+bearDiv = f_div(src, rsi, L, R, adjMinGap, false) or f_div(src, hist, L, R, adjMinGap, false)
 
-bullAny = (bRSI or bMACD)
-bearAny = (sRSI or sMACD)
-bullDivSel = divSourceSel=="MACDのみ" ? bMACD : divSourceSel=="RSIのみ" ? bRSI : bullAny
-bearDivSel = divSourceSel=="MACDのみ" ? sMACD : divSourceSel=="RSIのみ" ? sRSI : bearAny
-
-// 確定ロジック
 emaTrend = ta.ema(close, maLen)
-emaUp    = ta.rising(emaTrend, trendBars)
-emaDn    = ta.falling(emaTrend, trendBars)
-trendBullOK = (not useTrendFilt) or (close > emaTrend) or emaUp
-trendBearOK = (not useTrendFilt) or (close < emaTrend) or emaDn
-
-bs = ta.barssince(bullDivSel)
-ss = ta.barssince(bearDivSel)
-
-hhSinceDiv = (bs >= 0) ? ta.highest(high, bs + 1) : na
-llSinceDiv = (ss >= 0) ? ta.lowest(low,  ss + 1)  : na
-breakUpOK = (not useSwingBreak) or ((bs > 0) and ta.crossover(close, hhSinceDiv))
-breakDnOK = (not useSwingBreak) or ((ss > 0) and ta.crossunder(close, llSinceDiv))
+emaUp = ta.rising(emaTrend, trendBars)
+emaDn = ta.falling(emaTrend, trendBars)
+trendBullOK = (not useTrendFilt) or close > emaTrend or emaUp
+trendBearOK = (not useTrendFilt) or close < emaTrend or emaDn
 
 momBullOK = (not useMACDconf) or ta.crossover(macdLine, signalLine) or ta.crossover(hist, 0)
 momBearOK = (not useMACDconf) or ta.crossunder(macdLine, signalLine) or ta.crossunder(hist, 0)
-rsiBullOK = (not useRSIconf)  or (rsi > 50)
-rsiBearOK = (not useRSIconf)  or (rsi < 50)
-volConfOK = (not useVolConf)  or volSpike
+rsiBullOK = (not useRSIconf) or rsi > 50
+rsiBearOK = (not useRSIconf) or rsi < 50
 
-bullConfirmed = useConfirm and (bs >= 0) and breakUpOK and momBullOK and rsiBullOK and trendBullOK and volConfOK
-bearConfirmed = useConfirm and (ss >= 0) and breakDnOK and momBearOK and rsiBearOK and trendBearOK and volConfOK
+bullQuality = (trendBullOK ? 1 : 0) + (momBullOK ? 1 : 0) + (rsiBullOK ? 1 : 0) + (atrRatio <= 1.8 ? 1 : 0) + (close > emaTrend ? 1 : 0)
+bearQuality = (trendBearOK ? 1 : 0) + (momBearOK ? 1 : 0) + (rsiBearOK ? 1 : 0) + (atrRatio <= 1.8 ? 1 : 0) + (close < emaTrend ? 1 : 0)
 
-// コンボ
-bs_bullDiv = ta.barssince(bullDivSel)
-bs_bearDiv = ta.barssince(bearDivSel)
-bs_momUp   = ta.barssince(momUp)
-bs_momDn   = ta.barssince(momDn)
-
-divThenMomUp = (bs_bullDiv >= 0) and (bs_bullDiv <= comboBars) and momUp
-momThenDivUp = (bs_momUp   >= 0) and (bs_momUp   <= comboBars) and bullDivSel
-divThenMomDn = (bs_bearDiv >= 0) and (bs_bearDiv <= comboBars) and momDn
-momThenDivDn = (bs_momDn   >= 0) and (bs_momDn   <= comboBars) and bearDivSel
-
-bullCombo = useComboBull and ((orderOpt != "MOM→Divのみ" and divThenMomUp) or (orderOpt != "Div→MOMのみ" and momThenDivUp))
-bearCombo = useComboBear and ((orderOpt != "MOM→Divのみ" and divThenMomDn) or (orderOpt != "Div→MOMのみ" and momThenDivDn))
+bullSignal = momUp and bullDiv and trendBullOK and (not useHtfBias or htfBull) and bullQuality >= minQuality
+bearSignal = momDn and bearDiv and trendBearOK and (not useHtfBias or htfBear) and bearQuality >= minQuality
 
 // ==========================================
-// 描画ヘルパー (Drawing)
+// 4. 描画
 // ==========================================
-atrVal = ta.atr(14)
-atrOff = atrVal * atrMult
-pctOff = close * (pctPct/100.0)
-baseOff = offMode=="自動" ? math.max(atrOff, pctOff) : offMode=="ATR" ? atrOff : pctOff
+groupView = "表示制御"
+showLabels = input.bool(true, "ラベル表示", group=groupView)
+showDebug = input.bool(true, "デバッグテーブル", group=groupView)
 
-getYUp() => anchorSel=="終値±" ? close + baseOff : high + baseOff
-getYDn() => anchorSel=="終値±" ? close - baseOff : low  - baseOff
+if showLabels and bullSignal
+    label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.small)
+if showLabels and bearSignal
+    label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
 
-// 色設定（透明度適用）
-colMomUp = color.new(color.fuchsia, alphaLbl)
-colMomDn = color.new(color.orange,  alphaLbl)
-colDivUp = color.new(color.aqua,    alphaLbl)
-colDivDn = color.new(color.red,     alphaLbl)
-colBull  = color.new(color.teal,    alphaLbl)
-colBear  = color.new(color.maroon,  alphaLbl)
+var table t = table.new(position.top_right, 2, 8, border_width=1)
+if barstate.islast and showDebug
+    table.cell(t, 0, 0, "項目", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 1, 0, "値", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 0, 1, "Regime")
+    table.cell(t, 1, 1, regimeName)
+    table.cell(t, 0, 2, "RSI Up/Dn")
+    table.cell(t, 1, 2, str.tostring(adjRsiUp) + "/" + str.tostring(adjRsiDn))
+    table.cell(t, 0, 3, "Gap")
+    table.cell(t, 1, 3, str.tostring(adjMinGap))
+    table.cell(t, 0, 4, "HTF Bias")
+    table.cell(t, 1, 4, useHtfBias ? (htfBull ? "Bull" : htfBear ? "Bear" : "Flat") : "OFF")
+    table.cell(t, 0, 5, "Bull/Bear Q")
+    table.cell(t, 1, 5, str.tostring(bullQuality) + "/" + str.tostring(bearQuality))
+    table.cell(t, 0, 6, "ATR Ratio")
+    table.cell(t, 1, 6, str.tostring(atrRatio, "#.##"))
+    table.cell(t, 0, 7, "Style/TF")
+    table.cell(t, 1, 7, tradeStyle + " / " + str.tostring(tfCat))
 
-// 描画関数
-draw(txt, col, isUp) => 
-    label.new(bar_index, isUp ? getYUp() : getYDn(), txt, 
-              xloc=xloc.bar_index, yloc=yloc.price, 
-              style=isUp ? label.style_label_up : label.style_label_down, 
-              textcolor=textColor, color=col, size=labelSize)
-
-// 直近バー保持（重複回避）
-var int lastMOMUp = na, var int lastMOMDn = na
-var int lastDivUp = na, var int lastDivDn = na
-var int lastConfUp= na, var int lastConfDn= na
-var int lastComboUp=na, var int lastComboDn=na
-
-allow(lastBar) => na(lastBar) or (bar_index - lastBar >= labelGapBars)
-
-if showLabels
-    // MOM
-    if showMOM and showMOMUp and momUp and allow(lastMOMUp)
-        draw("MOM", colMomUp, true), lastMOMUp := bar_index
-    if showMOM and showMOMDn and momDn and allow(lastMOMDn)
-        draw("MOM", colMomDn, false), lastMOMDn := bar_index
-
-    // Div
-    if showDiv and not divConfirmedOnly and bullDivSel and allow(lastDivUp)
-        draw("DIV", colDivUp, true), lastDivUp := bar_index
-    if showDiv and not divConfirmedOnly and bearDivSel and allow(lastDivDn)
-        draw("DIV", colDivDn, false), lastDivDn := bar_index
-
-    // Confirm
-    if showConfirm and bullConfirmed and allow(lastConfUp)
-        draw("CONF", colBull, true), lastConfUp := bar_index
-    if showConfirm and bearConfirmed and allow(lastConfDn)
-        draw("CONF", colBear, false), lastConfDn := bar_index
-
-    // Combo
-    if showCombo and bullCombo and allow(lastComboUp)
-        draw("CMB", colBull, true), lastComboUp := bar_index
-    if showCombo and bearCombo and allow(lastComboDn)
-        draw("CMB", colBear, false), lastComboDn := bar_index
+alertcondition(bullSignal, "Bull Signal", "Bull signal - " + regimeName)
+alertcondition(bearSignal, "Bear Signal", "Bear signal - " + regimeName)
