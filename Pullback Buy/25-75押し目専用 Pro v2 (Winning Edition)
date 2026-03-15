@@ -1,0 +1,578 @@
+//@version=6
+indicator("25/75押し目専用 Pro v2 (Winning Edition)", shorttitle="2575WE", overlay=true, max_labels_count=500, max_lines_count=200)
+
+//====================================================
+// 1) 入力
+//====================================================
+groupCore = "基本"
+groupRisk = "リスク"
+groupTP   = "利確・損切"
+groupView = "表示"
+
+useWeeklyFilter  = input.bool(true, "週足方向フィルター", group=groupCore)
+useVWAPFilter    = input.bool(false, "VWAPフィルター", group=groupCore)
+useADXFilter     = input.bool(true, "ADXトレンド強度フィルター", group=groupCore)
+buyCooldownBars  = input.int(3, "BUYシグナル間隔", minval=0, group=groupCore)
+warnCooldownBars = input.int(5, "WARN間隔", minval=0, group=groupCore)
+exitCooldownBars = input.int(8, "EXIT間隔", minval=0, group=groupCore)
+minScore         = input.int(8, "通常シグナル最低スコア", minval=1, maxval=25, group=groupCore)
+strongScore      = input.int(12, "強シグナル最低スコア", minval=1, maxval=25, group=groupCore)
+
+dev25Min        = input.float(-4.0, "25日乖離 下限(通常)%", step=0.1, group=groupRisk)
+dev25Max        = input.float( 1.5, "25日乖離 上限(通常)%", step=0.1, group=groupRisk)
+dev25MinHighVol = input.float(-5.5, "25日乖離 下限(高ボラ)%", step=0.1, group=groupRisk)
+dev25MaxHighVol = input.float( 1.0, "25日乖離 上限(高ボラ)%", step=0.1, group=groupRisk)
+atrHighVolTh    = input.float(2.8, "高ボラ 固定ATR%しきい値", step=0.1, group=groupRisk)
+atrRatioMult    = input.float(1.35, "高ボラ ATR平常比", step=0.05, group=groupRisk)
+dayDropLimit    = input.float(-4.5, "急落日 見送り基準%", step=0.1, group=groupRisk)
+minVolRatio     = input.float(0.7, "最低出来高倍率", minval=0.1, step=0.1, group=groupRisk)
+
+// 利確・損切設定
+useTrailingStop  = input.bool(true, "トレーリングストップ", group=groupTP)
+trailATRMult     = input.float(2.5, "トレーリングATR倍率", minval=0.5, step=0.1, group=groupTP)
+tp1ATRMult       = input.float(2.0, "TP1 ATR倍率", minval=0.5, step=0.1, group=groupTP)
+tp2ATRMult       = input.float(4.0, "TP2 ATR倍率", minval=1.0, step=0.1, group=groupTP)
+slATRMult        = input.float(1.8, "損切 ATR倍率", minval=0.5, step=0.1, group=groupTP)
+showTPSL         = input.bool(true, "TP/SLライン表示", group=groupTP)
+
+showBg        = input.bool(true, "背景色", group=groupView)
+showPanel     = input.bool(true, "簡易パネル", group=groupView)
+showTrail     = input.bool(true, "トレーリングライン表示", group=groupView)
+panelPosInput = input.string("右上", "パネル位置", options=["右上", "右中", "右下", "左上", "左中", "左下"], group=groupView)
+
+//====================================================
+// 2) 指標
+//====================================================
+ema5  = ta.ema(close, 5)
+ema25 = ta.ema(close, 25)
+ema75 = ta.ema(close, 75)
+ema200 = ta.ema(close, 200)
+
+rsi = ta.rsi(close, 14)
+[macdLine, signalLine, hist] = ta.macd(close, 12, 26, 9)
+vwapVal = ta.vwap(hlc3)
+
+atr = ta.atr(14)
+atrPct = close != 0 ? atr / close * 100.0 : 0.0
+atrPctMa = ta.sma(atrPct, 60)
+
+volMa = ta.sma(volume, 20)
+volRatio = volMa > 0 ? volume / volMa : 0.0
+
+dev25Pct = ema25 != 0 ? (close / ema25 - 1.0) * 100.0 : 0.0
+slope75Pct = ema75[5] != 0 ? (ema75 / ema75[5] - 1.0) * 100.0 : 0.0
+slope25Pct = ema25[3] != 0 ? (ema25 / ema25[3] - 1.0) * 100.0 : 0.0
+dayChgPct = close[1] != 0 ? (close / close[1] - 1.0) * 100.0 : 0.0
+
+range_ = math.max(high - low, syminfo.mintick)
+body = math.abs(close - open)
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+closePos = (close - low) / range_
+
+// ADX (トレンド強度)
+adxLen = 14
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+adxOK = not useADXFilter or adxVal >= 20
+
+// ボリンジャーバンド（スクイーズ検出用）
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, 20, 2.0)
+bbWidth = bbMiddle != 0 ? (bbUpper - bbLower) / bbMiddle * 100.0 : 0.0
+bbWidthMa = ta.sma(bbWidth, 50)
+isSqueeze = bbWidth < bbWidthMa * 0.75
+
+// 出来高分析：押し目中の出来高枯れ検出
+volDryUp = ta.lowest(volume, 3) < volMa * 0.6
+volSurge = volume > volMa * 1.3
+
+// スイングロー検出（直近の支持線）
+swingLow = ta.lowest(low, 10)
+swingHigh = ta.highest(high, 10)
+
+//====================================================
+// 3) 週足方向（前週確定ベース）
+//====================================================
+wEma     = request.security(syminfo.tickerid, "W", ta.ema(close, 10)[1], lookahead=barmerge.lookahead_on)
+wEmaPrev = request.security(syminfo.tickerid, "W", ta.ema(close, 10)[2], lookahead=barmerge.lookahead_on)
+wClose   = request.security(syminfo.tickerid, "W", close[1], lookahead=barmerge.lookahead_on)
+weeklySlopePct = wEmaPrev != 0 ? (wEma / wEmaPrev - 1.0) * 100.0 : 0.0
+weeklyOK = not useWeeklyFilter or (wClose >= wEma and weeklySlopePct >= 0)
+
+//====================================================
+// 4) レジーム判定（改良版）
+//====================================================
+isHighVolFixed    = atrPct >= atrHighVolTh
+isHighVolRelative = atrPctMa > 0 ? atrPct >= atrPctMa * atrRatioMult : false
+isHighVol         = isHighVolFixed or isHighVolRelative
+
+isDownTrend = close < ema75 or slope75Pct < 0
+isCrashLike = dayChgPct <= dayDropLimit and close < ema25
+
+// 強トレンド判定
+isStrongTrend = ema5 > ema25 and ema25 > ema75 and slope75Pct >= 0.3 and adxVal >= 25
+// EMA200上の上位トレンド
+isAbove200 = close > ema200
+
+regime = (
+     isCrashLike  ? "急落" :
+     isDownTrend  ? "下降" :
+     isStrongTrend ? "強上昇" :
+     isHighVol    ? "高ボラ" :
+                    "通常"
+)
+
+//====================================================
+// 5) 押し目条件（改良版）
+//====================================================
+float minDev = isHighVol ? dev25MinHighVol : dev25Min
+float maxDev = isHighVol ? dev25MaxHighVol : dev25Max
+
+trendOK = close >= ema75 and ema25 >= ema75 and slope75Pct >= 0.10
+pullbackZone = dev25Pct >= minDev and dev25Pct <= maxDev
+
+// 25EMAタッチ判定（少し緩め）
+touch25Recently = ta.lowest(low, 5) <= ema25 * 1.015
+
+// リクレーム判定（改良：複数パターン対応）
+reclaim5 = ta.crossover(close, ema5) or (close > ema5 and close[1] <= ema5[1])
+breakPrevHigh = close > high[1] and close > high[2]
+hammerBounce = lowerWick > body * 1.5 and close > open and low <= ema25 * 1.01
+reclaimOK = reclaim5 or breakPrevHigh or hammerBounce
+
+// RSI改良：下から反転を重視
+rsiTurnOK = (
+    rsi > rsi[1] and
+    ta.lowest(rsi, 6) <= 45 and
+    rsi >= 38 and
+    rsi <= 62
+)
+
+// RSIの隠れた強気ダイバージェンス検出
+rsiDiv = close < close[5] and rsi > rsi[5] and rsi[5] < 45
+
+// MACD改良
+macdTurnOK = (
+    ta.crossover(macdLine, signalLine) or
+    (hist > hist[1] and hist[1] <= 0) or
+    (hist > hist[1] and hist > hist[2] and hist[2] <= 0)
+)
+
+// ローソク足パターン改良
+bullCandleOK = (
+    (close > open and closePos >= 0.55) or
+    hammerBounce or
+    (close > open and body > range_ * 0.5)  // 大陽線
+)
+
+// 包み足パターン
+bullEngulfing = close > open and close > high[1] and open <= low[1] and body > body[1]
+
+vwapOK = not useVWAPFilter or na(vwapVal) or close >= vwapVal
+volumeOK = volRatio >= minVolRatio
+
+knifeOK = (
+    dayChgPct > dayDropLimit and
+    closePos > 0.40 and
+    close > low + range_ * 0.30
+)
+
+// 押し目中の出来高枯れ → 反発で出来高増 = 高品質シグナル
+volQualitySignal = volDryUp[1] and volSurge
+
+// 初回押し目IN（緩和版：条件を少し減らしてシグナル頻度UP）
+hardFilterOK = (
+    trendOK and
+    weeklyOK and
+    adxOK and
+    pullbackZone and
+    touch25Recently and
+    reclaimOK and
+    (rsiTurnOK or rsiDiv) and
+    (macdTurnOK or bullEngulfing) and
+    bullCandleOK and
+    volumeOK and
+    vwapOK and
+    knifeOK and
+    not isCrashLike
+)
+
+// 再IN（上昇継続中の再加速）
+reEntryOK = (
+    trendOK and
+    weeklyOK and
+    adxOK and
+    close > ema25 and
+    ema5 > ema25 and
+    dev25Pct >= -1.5 and
+    dev25Pct <= 2.0 and
+    close > high[1] and
+    rsi >= 45 and
+    rsi <= 65 and
+    hist > hist[1] and
+    volumeOK and
+    vwapOK and
+    not isCrashLike
+)
+
+// スクイーズブレイク（BB収縮→拡大の初動）
+squeezeBreakOK = (
+    trendOK and
+    weeklyOK and
+    isSqueeze[1] and
+    not isSqueeze and
+    close > bbMiddle and
+    close > ema25 and
+    volumeOK and
+    rsi >= 45 and
+    not isCrashLike
+)
+
+//====================================================
+// 6) スコア（改良版：より精密な配点）
+//====================================================
+trendScore   = trendOK ? 3 : 0
+strongTrScore = isStrongTrend ? 2 : 0
+weeklyScore  = weeklyOK ? 2 : 0
+above200Score = isAbove200 ? 1 : 0
+adxScore     = adxVal >= 25 ? 2 : (adxVal >= 20 ? 1 : 0)
+zoneScore    = pullbackZone ? 3 : (dev25Pct >= -1.5 and dev25Pct <= 2.0 ? 1 : 0)
+touchScore   = touch25Recently ? 2 : 0
+reclaimScore = reclaim5 ? 2 : (breakPrevHigh ? 2 : (hammerBounce ? 2 : 0))
+rsiScore     = rsiTurnOK ? 2 : (rsi >= 45 and rsi <= 60 ? 1 : 0)
+rsiDivScore  = rsiDiv ? 2 : 0
+macdScore    = ta.crossover(macdLine, signalLine) ? 3 : (hist > hist[1] and hist[1] <= 0 ? 2 : (hist > hist[1] ? 1 : 0))
+candleScore  = bullEngulfing ? 2 : (bullCandleOK ? 1 : 0)
+volumeScore  = volQualitySignal ? 3 : (volRatio >= 1.5 ? 2 : (volRatio >= 1.2 ? 1 : 0))
+squeezeScore = isSqueeze[1] and not isSqueeze and close > bbMiddle ? 2 : 0
+
+riskPenalty = (
+    (isHighVol ? 1 : 0) +
+    (dev25Pct < -5.5 ? 2 : (dev25Pct < -4.0 ? 1 : 0)) +
+    (dayChgPct < -3.0 ? 1 : 0) +
+    (not isAbove200 ? 1 : 0)
+)
+
+signalScore = trendScore + strongTrScore + weeklyScore + above200Score + adxScore + zoneScore + touchScore + reclaimScore + rsiScore + rsiDivScore + macdScore + candleScore + volumeScore + squeezeScore - riskPenalty
+scoreNeeded = isHighVol ? minScore + 2 : minScore
+
+//====================================================
+// 7) ポジション状態（改良版：トレーリングストップ付き）
+//====================================================
+var bool inTrade = false
+var int lastBuy = na
+var int lastWarn = na
+var int lastExit = na
+var float entryPrice = na
+var float trailStop = na
+var float tp1Level = na
+var float tp2Level = na
+var float slLevel = na
+var bool tp1Hit = false
+
+//====================================================
+// 8) BUY シグナル
+//====================================================
+rawBuy = (hardFilterOK or reEntryOK or squeezeBreakOK) and signalScore >= scoreNeeded
+signalBuy = (not inTrade) and rawBuy and (na(lastBuy) or bar_index - lastBuy > buyCooldownBars)
+strongBuy = signalBuy and signalScore >= strongScore and not isHighVol
+halfSizeBuy = signalBuy and isHighVol
+
+//====================================================
+// 9) トレーリングストップ & TP/SL管理
+//====================================================
+if signalBuy
+    entryPrice := close
+    trailStop  := close - atr * trailATRMult
+    tp1Level   := close + atr * tp1ATRMult
+    tp2Level   := close + atr * tp2ATRMult
+    slLevel    := close - atr * slATRMult
+    tp1Hit     := false
+
+if inTrade and useTrailingStop
+    // トレーリングストップ更新（上方向のみ）
+    newTrail = close - atr * trailATRMult
+    if newTrail > trailStop
+        trailStop := newTrail
+    // TP1到達後はトレーリングを引き締め
+    if not tp1Hit and high >= tp1Level
+        tp1Hit := true
+    if tp1Hit
+        tightTrail = close - atr * (trailATRMult * 0.6)
+        if tightTrail > trailStop
+            trailStop := tightTrail
+
+// トレーリングストップヒット
+trailStopHit = inTrade and useTrailingStop and not na(trailStop) and close < trailStop
+
+// 損切ヒット
+slHit = inTrade and not na(slLevel) and close < slLevel
+
+//====================================================
+// 10) WARN / EXIT（改良版：段階的EXIT）
+//====================================================
+// TP2到達（過熱利確）
+tp2Hit = inTrade and not na(tp2Level) and high >= tp2Level
+
+takeProfitStretch = (
+    dev25Pct >= 4.0 and
+    rsi >= 65 and
+    (upperWick > body or close < open)
+)
+
+// 5EMA割れ軽警戒（改良：モメンタム低下も考慮）
+rawWarn = (
+    (ta.crossunder(close, ema5) or (rsi < rsi[1] and rsi[1] < rsi[2] and rsi < 55)) and
+    close >= ema25 and
+    not isCrashLike and
+    not isDownTrend
+)
+
+// EXIT条件（改良：より早い段階でのEXIT）
+rawExit = (
+    ta.crossunder(close, ema25) or
+    (ta.crossunder(macdLine, signalLine) and close < ema25) or
+    takeProfitStretch or
+    tp2Hit or
+    trailStopHit or
+    slHit or
+    (close < ema5 and rsi < 40 and hist < hist[1] and hist < 0)  // モメンタム崩壊
+)
+
+warnSignal = inTrade and (not rawExit) and rawWarn and (na(lastWarn) or bar_index - lastWarn > warnCooldownBars)
+exitSignal = inTrade and rawExit and (na(lastExit) or bar_index - lastExit > exitCooldownBars)
+
+// TP1到達通知
+tp1Signal = inTrade and tp1Hit and not tp1Hit[1]
+
+// EXIT理由の判定
+exitReason = (
+    tp2Hit ? "TP2利確" :
+    trailStopHit ? "トレーリング" :
+    slHit ? "損切" :
+    takeProfitStretch ? "過熱利確" :
+    ta.crossunder(close, ema25) ? "25EMA割れ" :
+    (close < ema5 and rsi < 40) ? "モメンタム崩壊" :
+    "MACD悪化"
+)
+
+// 状態更新
+if signalBuy
+    inTrade := true
+    lastBuy := bar_index
+else if exitSignal
+    inTrade := false
+    lastExit := bar_index
+    entryPrice := na
+    trailStop  := na
+    tp1Level   := na
+    tp2Level   := na
+    slLevel    := na
+    tp1Hit     := false
+
+if warnSignal
+    lastWarn := bar_index
+
+riskOff = isDownTrend or isCrashLike
+
+//====================================================
+// 11) 描画
+//====================================================
+plot(ema5,   "EMA5",   color=color.aqua,    linewidth=2)
+plot(ema25,  "EMA25",  color=color.orange,  linewidth=2)
+plot(ema75,  "EMA75",  color=color.fuchsia, linewidth=2)
+plot(ema200, "EMA200", color=color.gray,    linewidth=1, style=plot.style_cross)
+
+// トレーリングストップライン
+plot(inTrade and showTrail and useTrailingStop ? trailStop : na, "Trail Stop",
+     color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline)
+
+// TP/SLライン
+plot(inTrade and showTPSL ? tp1Level : na, "TP1", color=color.new(color.lime, 60), linewidth=1, style=plot.style_cross)
+plot(inTrade and showTPSL ? tp2Level : na, "TP2", color=color.new(color.green, 60), linewidth=1, style=plot.style_cross)
+plot(inTrade and showTPSL ? slLevel : na,  "SL",  color=color.new(color.red, 60), linewidth=1, style=plot.style_cross)
+
+bgColor = (
+     isCrashLike   ? color.new(color.red, 88) :
+     isDownTrend   ? color.new(color.maroon, 88) :
+     isStrongTrend ? color.new(color.green, 88) :
+     isHighVol     ? color.new(color.orange, 90) :
+                     color.new(color.green, 93)
+)
+bgcolor(showBg ? bgColor : na)
+
+plotshape(signalBuy and not halfSizeBuy and not strongBuy,
+     title="Buy",
+     location=location.belowbar,
+     style=shape.labelup,
+     color=color.new(color.lime, 0),
+     text="BUY",
+     textcolor=color.black,
+     size=size.small)
+
+plotshape(halfSizeBuy,
+     title="Half Size Buy",
+     location=location.belowbar,
+     style=shape.labelup,
+     color=color.new(color.orange, 0),
+     text="BUY\nHALF",
+     textcolor=color.black,
+     size=size.small)
+
+plotshape(strongBuy,
+     title="Strong Buy",
+     location=location.belowbar,
+     style=shape.labelup,
+     color=color.new(color.green, 0),
+     text="A+\nBUY",
+     textcolor=color.white,
+     size=size.normal)
+
+plotshape(tp1Signal,
+     title="TP1 Hit",
+     location=location.abovebar,
+     style=shape.flag,
+     color=color.new(color.lime, 0),
+     text="TP1",
+     textcolor=color.green,
+     size=size.tiny)
+
+plotshape(warnSignal,
+     title="Warn",
+     location=location.abovebar,
+     style=shape.labeldown,
+     color=color.new(color.yellow, 0),
+     text="WARN",
+     textcolor=color.black,
+     size=size.tiny)
+
+plotshape(exitSignal and not slHit and not trailStopHit,
+     title="Exit",
+     location=location.abovebar,
+     style=shape.labeldown,
+     color=color.new(color.red, 0),
+     text="EXIT",
+     textcolor=color.white,
+     size=size.tiny)
+
+plotshape(exitSignal and slHit,
+     title="Stop Loss",
+     location=location.abovebar,
+     style=shape.xcross,
+     color=color.new(color.red, 0),
+     text="SL",
+     textcolor=color.red,
+     size=size.small)
+
+plotshape(exitSignal and trailStopHit and not slHit,
+     title="Trail Stop",
+     location=location.abovebar,
+     style=shape.labeldown,
+     color=color.new(color.orange, 0),
+     text="TRAIL\nEXIT",
+     textcolor=color.black,
+     size=size.tiny)
+
+// Hidden outputs
+plot(signalScore, "Signal Score", color=color.new(color.white, 100), display=display.none)
+plot(signalBuy ? 1 : 0, "Buy Bool", color=color.new(color.white, 100), display=display.none)
+plot(strongBuy ? 1 : 0, "Strong Buy Bool", color=color.new(color.white, 100), display=display.none)
+plot(halfSizeBuy ? 1 : 0, "Half Buy Bool", color=color.new(color.white, 100), display=display.none)
+plot(warnSignal ? 1 : 0, "Warn Bool", color=color.new(color.white, 100), display=display.none)
+plot(exitSignal ? 1 : 0, "Exit Bool", color=color.new(color.white, 100), display=display.none)
+plot(inTrade ? 1 : 0, "In Trade Bool", color=color.new(color.white, 100), display=display.none)
+plot(adxVal, "ADX", color=color.new(color.white, 100), display=display.none)
+plot(tp1Hit ? 1 : 0, "TP1 Hit Bool", color=color.new(color.white, 100), display=display.none)
+
+//====================================================
+// 12) パネル（改良版：より詳細な情報）
+//====================================================
+panelPos = (
+     panelPosInput == "右上" ? position.top_right :
+     panelPosInput == "右中" ? position.middle_right :
+     panelPosInput == "右下" ? position.bottom_right :
+     panelPosInput == "左上" ? position.top_left :
+     panelPosInput == "左中" ? position.middle_left :
+                               position.bottom_left
+)
+
+var table panel = table.new(panelPos, 2, 15,
+     bgcolor=color.new(color.black, 20),
+     border_width=1,
+     border_color=color.new(color.gray, 60))
+
+stateTxt = (
+     strongBuy   ? "★ STRONG BUY" :
+     halfSizeBuy ? "BUY 0.5x" :
+     signalBuy   ? "BUY 1.0x" :
+     exitSignal  ? "EXIT (" + exitReason + ")" :
+     tp1Signal   ? "TP1到達！" :
+     warnSignal  ? "WARN" :
+     inTrade     ? "HOLD" + (tp1Hit ? " (TP1済)" : "") :
+     riskOff     ? "RISK OFF" :
+                   "WAIT"
+)
+
+stateClr = (
+     strongBuy   ? color.lime :
+     halfSizeBuy ? color.orange :
+     signalBuy   ? color.yellow :
+     exitSignal  ? color.red :
+     tp1Signal   ? color.lime :
+     warnSignal  ? color.yellow :
+     inTrade     ? color.aqua :
+     riskOff     ? color.red :
+                   color.silver
+)
+
+// 損益表示
+pnlPct = inTrade and not na(entryPrice) and entryPrice > 0 ? (close / entryPrice - 1.0) * 100.0 : 0.0
+
+if showPanel and barstate.islast
+    table.cell(panel, 0, 0, "項目", text_color=color.white, bgcolor=color.new(color.navy, 30))
+    table.cell(panel, 1, 0, "値",   text_color=color.white, bgcolor=color.new(color.navy, 30))
+    table.cell(panel, 0, 1, "状態", text_color=color.white)
+    table.cell(panel, 1, 1, stateTxt, text_color=stateClr)
+    table.cell(panel, 0, 2, "保有", text_color=color.white)
+    table.cell(panel, 1, 2, inTrade ? "IN" : "OUT", text_color=inTrade ? color.lime : color.silver)
+    table.cell(panel, 0, 3, "損益", text_color=color.white)
+    table.cell(panel, 1, 3,
+         inTrade ? str.tostring(pnlPct, "#.##") + "%" : "---",
+         text_color=pnlPct >= 0 ? color.lime : color.red)
+    table.cell(panel, 0, 4, "レジーム", text_color=color.white)
+    regimeClr = regime == "強上昇" ? color.lime : regime == "通常" ? color.white : regime == "高ボラ" ? color.orange : color.red
+    table.cell(panel, 1, 4, regime, text_color=regimeClr)
+    table.cell(panel, 0, 5, "25日乖離", text_color=color.white)
+    table.cell(panel, 1, 5, str.tostring(dev25Pct, "#.##") + "%", text_color=color.white)
+    table.cell(panel, 0, 6, "75日傾き", text_color=color.white)
+    table.cell(panel, 1, 6, str.tostring(slope75Pct, "#.##") + "%", text_color=color.white)
+    table.cell(panel, 0, 7, "週足方向", text_color=color.white)
+    table.cell(panel, 1, 7, weeklyOK ? "OK" : "NG", text_color=weeklyOK ? color.lime : color.red)
+    table.cell(panel, 0, 8, "ADX", text_color=color.white)
+    table.cell(panel, 1, 8, str.tostring(adxVal, "#.0"), text_color=adxVal >= 25 ? color.lime : (adxVal >= 20 ? color.yellow : color.red))
+    table.cell(panel, 0, 9, "ATR%", text_color=color.white)
+    table.cell(panel, 1, 9, str.tostring(atrPct, "#.##") + "%", text_color=isHighVol ? color.orange : color.white)
+    table.cell(panel, 0, 10, "RSI", text_color=color.white)
+    table.cell(panel, 1, 10, str.tostring(rsi, "#.0"), text_color=rsi >= 65 ? color.red : (rsi <= 40 ? color.yellow : color.white))
+    table.cell(panel, 0, 11, "BB幅", text_color=color.white)
+    table.cell(panel, 1, 11, str.tostring(bbWidth, "#.##") + (isSqueeze ? " ★" : ""), text_color=isSqueeze ? color.yellow : color.white)
+    table.cell(panel, 0, 12, "Score", text_color=color.white)
+    scoreClr = signalScore >= strongScore ? color.lime : (signalScore >= scoreNeeded ? color.yellow : color.silver)
+    table.cell(panel, 1, 12, str.tostring(signalScore) + " / " + str.tostring(scoreNeeded), text_color=scoreClr)
+    table.cell(panel, 0, 13, "Trail", text_color=color.white)
+    table.cell(panel, 1, 13,
+         inTrade and not na(trailStop) ? str.tostring(trailStop, "#.0") : "---",
+         text_color=color.orange)
+    table.cell(panel, 0, 14, "EMA200", text_color=color.white)
+    table.cell(panel, 1, 14, isAbove200 ? "上" : "下", text_color=isAbove200 ? color.lime : color.red)
+
+//====================================================
+// 13) アラート
+//====================================================
+alertcondition(signalBuy,   "25/75押し目買い",     "25/75押し目買いシグナル")
+alertcondition(strongBuy,   "25/75強い押し目買い", "25/75強い押し目買いシグナル")
+alertcondition(halfSizeBuy, "25/75半サイズ買い",   "高ボラのため半サイズ推奨の押し目買いシグナル")
+alertcondition(warnSignal,  "25/75 WARN",          "保有中の5EMA割れ軽警戒シグナル")
+alertcondition(exitSignal,  "25/75 EXIT",          "EXIT: " + exitReason)
+alertcondition(tp1Signal,   "25/75 TP1到達",       "TP1到達 - 半分利確推奨")
+alertcondition(riskOff,     "25/75 見送り",        "75日線条件または急落条件により見送り")
+alertcondition(trailStopHit, "25/75 トレーリング", "トレーリングストップヒット")
