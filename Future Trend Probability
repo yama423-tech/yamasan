@@ -142,10 +142,11 @@ if not na(resNow) and not na(supNow)
             srScore := 1.0 - position * 0.6  // 内側: サポート寄り=強気
 
 // --- 5. トレンド継続性: 回帰傾きが同方向を何本維持しているか ---
+//     lrSlopeは毎バー計算済みのシリーズなので [i] で過去参照可能
 trendCount = 0
 trendDir   = lrSlope > 0 ? 1 : -1
 for i = 1 to 60
-    pastDir = (ta.linreg(close, regLen, 0)[i] - ta.linreg(close, regLen, 1)[i]) > 0 ? 1 : -1
+    pastDir = lrSlope[i] > 0 ? 1 : -1
     if pastDir == trendDir
         trendCount += 1
     else
@@ -306,65 +307,51 @@ var table infoTbl = table.new(position.top_right, 2, 12, bgcolor=color.new(color
      border_color=color.gray, border_width=1, frame_color=color.gray, frame_width=1)
 
 if barstate.islast
-    row = 0
-    f_cell(c, r, t, tc) =>
-        table.cell(infoTbl, c, r, t, text_color=tc, text_size=size.small)
-
-    f_cell(0, row, "指標", color.white),       f_cell(1, row, "値", color.white)
-    row += 1
+    table.cell(infoTbl, 0, 0, "指標", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 0, "値",   text_color=color.white, text_size=size.small)
 
     // 過去相関（新規）
-    f_cell(0, row, "R²（フィット度）", color.white)
-    f_cell(1, row, str.tostring(math.round(r2, 3)),
-         r2 > 0.7 ? color.lime : r2 > 0.4 ? color.yellow : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 1, "R²（フィット度）", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 1, str.tostring(math.round(r2, 3)),
+         text_color=r2 > 0.7 ? color.lime : r2 > 0.4 ? color.yellow : color.red, text_size=size.small)
 
-    f_cell(0, row, "過去予測精度", color.white)
-    f_cell(1, row, str.tostring(math.round(pastAccuracy * 100, 1)) + "%",
-         pastAccuracy > 0.7 ? color.lime : pastAccuracy > 0.4 ? color.yellow : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 2, "過去予測精度", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 2, str.tostring(math.round(pastAccuracy * 100, 1)) + "%",
+         text_color=pastAccuracy > 0.7 ? color.lime : pastAccuracy > 0.4 ? color.yellow : color.red, text_size=size.small)
 
-    f_cell(0, row, "トレンド継続", color.white)
-    f_cell(1, row, str.tostring(trendCount) + "本 " + (trendDir > 0 ? "↑" : "↓"),
-         trendDir > 0 ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 3, "トレンド継続", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 3, str.tostring(trendCount) + "本 " + (trendDir > 0 ? "↑" : "↓"),
+         text_color=trendDir > 0 ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "S/R位置", color.white)
-    f_cell(1, row, srScore > 0.55 ? "サポ寄り" : srScore < 0.45 ? "レジ寄り" : "中間",
-         srScore > 0.55 ? color.lime : srScore < 0.45 ? color.red : color.yellow)
-    row += 1
+    table.cell(infoTbl, 0, 4, "S/R位置", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 4, srScore > 0.55 ? "サポ寄り" : srScore < 0.45 ? "レジ寄り" : "中間",
+         text_color=srScore > 0.55 ? color.lime : srScore < 0.45 ? color.red : color.yellow, text_size=size.small)
 
     // 従来指標
-    f_cell(0, row, "RSI", color.white)
-    f_cell(1, row, str.tostring(math.round(rsiVal, 1)),
-         rsiVal > 50 ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 5, "RSI", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 5, str.tostring(math.round(rsiVal, 1)),
+         text_color=rsiVal > 50 ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "MACD Hist", color.white)
-    f_cell(1, row, str.tostring(math.round(histLine, 2)),
-         histLine > 0 ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 6, "MACD Hist", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 6, str.tostring(math.round(histLine, 2)),
+         text_color=histLine > 0 ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "ADX", color.white)
-    f_cell(1, row, str.tostring(math.round(adxVal, 1)),
-         adxVal > 25 ? color.lime : color.yellow)
-    row += 1
+    table.cell(infoTbl, 0, 7, "ADX", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 7, str.tostring(math.round(adxVal, 1)),
+         text_color=adxVal > 25 ? color.lime : color.yellow, text_size=size.small)
 
-    f_cell(0, row, "+DI / -DI", color.white)
-    f_cell(1, row, str.tostring(math.round(plusDI,1)) + " / " + str.tostring(math.round(minusDI,1)),
-         plusDI > minusDI ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 8, "+DI / -DI", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 8, str.tostring(math.round(plusDI,1)) + " / " + str.tostring(math.round(minusDI,1)),
+         text_color=plusDI > minusDI ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "EMA", color.white)
-    f_cell(1, row, emaS > emaL ? "GC ▲" : "DC ▼",
-         emaS > emaL ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 9, "EMA", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 9, emaS > emaL ? "GC ▲" : "DC ▼",
+         text_color=emaS > emaL ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "回帰傾き", color.white)
-    f_cell(1, row, str.tostring(math.round(lrSlope, 2)),
-         lrSlope > 0 ? color.lime : color.red)
-    row += 1
+    table.cell(infoTbl, 0, 10, "回帰傾き", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 10, str.tostring(math.round(lrSlope, 2)),
+         text_color=lrSlope > 0 ? color.lime : color.red, text_size=size.small)
 
-    f_cell(0, row, "▲強気/―中立/▼弱気", color.white)
-    f_cell(1, row, str.tostring(pBull) + "% / " + str.tostring(pBase) + "% / " + str.tostring(pBear) + "%",
-         pBull > pBear ? color.lime : color.red)
+    table.cell(infoTbl, 0, 11, "▲強気/―中立/▼弱気", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 11, str.tostring(pBull) + "% / " + str.tostring(pBase) + "% / " + str.tostring(pBear) + "%",
+         text_color=pBull > pBear ? color.lime : color.red, text_size=size.small)
