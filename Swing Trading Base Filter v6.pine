@@ -1,0 +1,76 @@
+//@version=6
+indicator("Swing Trading Base Filter v6 (Debugged & Polished)", overlay=true, max_labels_count=50)
+
+// ==========================================
+// 1) トレンド判定 (Trend Filter)
+// ==========================================
+int smaShortLen = input.int(50, "中期SMA期間", minval=1)
+int smaLongLen = input.int(200, "長期SMA期間", minval=1)
+
+float smaShort = ta.sma(close, smaShortLen)
+float smaLong = ta.sma(close, smaLongLen)
+
+// 十分なバーが揃ってから判定（na対策）
+bool trendReady = not na(smaShort) and not na(smaLong)
+
+// 上昇トレンド・下降トレンドの定義
+bool isUptrend = trendReady and (close > smaShort) and (smaShort > smaLong)
+bool isDowntrend = trendReady and (close < smaShort) and (smaShort < smaLong)
+
+// ==========================================
+// 2) ボラティリティ判定 (Volatility Filter)
+// ==========================================
+int atrLen = input.int(14, "ATR期間", minval=1)
+int atrSmaLen = input.int(50, "ATR平均期間", minval=1)
+
+float currentAtr = ta.atr(atrLen)
+float atrSma = ta.sma(currentAtr, atrSmaLen)
+
+bool volReady = not na(currentAtr) and not na(atrSma)
+// ATRが過去平均を上回っているか
+bool hasVolatility = volReady and (currentAtr > atrSma)
+
+// ==========================================
+// 3) 流動性判定 (Liquidity Filter)
+// ==========================================
+int volLen = input.int(20, "平均出来高期間", minval=1)
+float minVolume = input.float(100000, "最低平均出来高", minval=0, step=1000)
+
+float avgVolume = ta.sma(volume, volLen)
+bool liqReady = not na(avgVolume)
+bool hasLiquidity = liqReady and (avgVolume > minVolume)
+
+// ==========================================
+// 結合条件 (Base Conditions)
+// ==========================================
+// v6の遅延評価により、左側条件がfalseなら右側の評価はスキップされます
+bool baseLongCondition = isUptrend and hasVolatility and hasLiquidity
+bool baseShortCondition = isDowntrend and hasVolatility and hasLiquidity
+
+// ==========================================
+// 視覚化
+// ==========================================
+color longBg = color.new(color.green, 90)
+color shortBg = color.new(color.red, 90)
+bgcolor(baseLongCondition ? longBg : na, title="Long Filter Active")
+bgcolor(baseShortCondition ? shortBg : na, title="Short Filter Active")
+
+plot(smaShort, "中期SMA", color=color.new(color.teal, 0), linewidth=2)
+plot(smaLong, "長期SMA", color=color.new(color.orange, 0), linewidth=2)
+
+plotshape(baseLongCondition, title="Long Base ON", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, text="L")
+plotshape(baseShortCondition, title="Short Base ON", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="S")
+
+// デバッグ表示（ステータスラベル）
+bool showDebug = input.bool(true, "デバッグ表示ON")
+var label debugLabel = na
+if showDebug and barstate.islast
+    string status = "Trend=" + (isUptrend ? "UP" : isDowntrend ? "DOWN" : "FLAT") +
+      " | Vol=" + (hasVolatility ? "OK" : "NG") +
+      " | Liq=" + (hasLiquidity ? "OK" : "NG")
+    label.delete(debugLabel)
+    debugLabel := label.new(bar_index, high, status, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 0), size=size.tiny)
+
+// アラート
+alertcondition(baseLongCondition, title="Long Base Condition", message="Long Base Filter ON")
+alertcondition(baseShortCondition, title="Short Base Condition", message="Short Base Filter ON")
